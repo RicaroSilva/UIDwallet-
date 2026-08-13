@@ -30,10 +30,13 @@ $responseUri = "{$scheme}://{$host}{$basePath}/api/wallet-response.php?session={
 $nonce = base64url_random();
 $state = base64url_random();
 
+// Offer both formats as alternatives: the sd-jwt-vc PID uses vct_values,
+// the mdoc PID uses doctype_value + [namespace, element] claim paths. The
+// wallet matches whichever one it actually holds.
 $dcqlQuery = [
     'credentials' => [
         [
-            'id' => '0',
+            'id' => 'pid_sdjwt',
             'format' => 'dc+sd-jwt',
             'meta' => ['vct_values' => ['urn:eudi:pid:1']],
             'claims' => [
@@ -41,6 +44,18 @@ $dcqlQuery = [
                 ['path' => ['family_name'], 'id' => 'family_name'],
             ],
         ],
+        [
+            'id' => 'pid_mdoc',
+            'format' => 'mso_mdoc',
+            'meta' => ['doctype_value' => 'eu.europa.ec.eudi.pid.1'],
+            'claims' => [
+                ['path' => ['eu.europa.ec.eudi.pid.1', 'given_name'], 'id' => 'given_name'],
+                ['path' => ['eu.europa.ec.eudi.pid.1', 'family_name'], 'id' => 'family_name'],
+            ],
+        ],
+    ],
+    'credential_sets' => [
+        ['options' => [['pid_sdjwt'], ['pid_mdoc']], 'purpose' => 'PID - Nome próprio e nome de família'],
     ],
 ];
 
