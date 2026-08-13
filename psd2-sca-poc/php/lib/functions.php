@@ -167,15 +167,24 @@ function base64url_encode(string $data): string
 function get_signing_key(): array
 {
     $keyPath = __DIR__ . '/../keys/signing-key.pem';
+    // Some Windows PHP installs don't have openssl.cnf configured in
+    // php.ini, which makes openssl_pkey_new() fail with "no such file"
+    // even though it doesn't need any custom config for EC keygen. Passing
+    // our own minimal file avoids depending on server-wide php.ini changes.
+    $opensslConfig = __DIR__ . '/../openssl.cnf';
 
     if (is_file($keyPath)) {
-        $privateKey = openssl_pkey_get_private(file_get_contents($keyPath));
+        $privateKey = openssl_pkey_get_private(file_get_contents($keyPath), null, ['config' => $opensslConfig]);
     } else {
         $privateKey = openssl_pkey_new([
             'private_key_type' => OPENSSL_KEYTYPE_EC,
             'curve_name' => 'prime256v1',
+            'config' => $opensslConfig,
         ]);
-        openssl_pkey_export($privateKey, $pem);
+        if ($privateKey === false) {
+            throw new RuntimeException('openssl_pkey_new failed: ' . openssl_error_string());
+        }
+        openssl_pkey_export($privateKey, $pem, null, ['config' => $opensslConfig]);
         if (!is_dir(dirname($keyPath))) {
             mkdir(dirname($keyPath), 0700, true);
         }
