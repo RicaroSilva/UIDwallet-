@@ -9,6 +9,13 @@
 // is internally valid).
 
 declare(strict_types=1);
+
+// TEMPORARY while debugging the 500 on the real server -- shows the exact
+// PHP error instead of a bare 500, so we don't have to guess. Remove once
+// this endpoint is confirmed working.
+ini_set('display_errors', '1');
+error_reporting(E_ALL);
+
 require __DIR__ . '/../vendor/autoload.php';
 
 $session = $_GET['session'] ?? '';
@@ -24,5 +31,19 @@ if ($session === '' || !ctype_alnum(str_replace(['-', '_'], '', $session)) || !i
 
 $payload = json_decode(file_get_contents($path), true);
 
+try {
+    $jwt = sign_request_object_jwt($payload);
+} catch (\Throwable $error) {
+    http_response_code(500);
+    header('Content-Type: application/json');
+    echo json_encode([
+        'error' => 'signing_failed',
+        'message' => $error->getMessage(),
+        'file' => $error->getFile(),
+        'line' => $error->getLine(),
+    ]);
+    exit;
+}
+
 header('Content-Type: application/oauth-authz-req+jwt');
-echo sign_request_object_jwt($payload);
+echo $jwt;
