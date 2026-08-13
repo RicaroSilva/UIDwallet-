@@ -61,12 +61,17 @@ $PID_MDOC_NAMESPACE = 'eu.europa.ec.eudi.pid.1';
 // encoding was verified correct). Keeping this comfortably short avoids
 // that, same as the QR "Data too big" limit -- both are real ceilings on
 // how much a single request can carry.
+// TEMPORARY: stripped down to only the PID's mandatory attributes
+// (Section 2.2 of the PID rulebook), dropping address/portrait/etc, which
+// are optional and may not have been disclosed in this specific issuance
+// -- testing whether requesting an optional field the wallet doesn't have
+// is what's causing the whole match to fail.
 $sdJwtClaimNames = [
-    'given_name', 'family_name', 'birthdate', 'nationalities', 'address', 'portrait', 'issuing_country',
+    'given_name', 'family_name', 'birthdate', 'nationalities',
 ];
 
 $mdocClaimNames = [
-    'given_name', 'family_name', 'birth_date', 'nationality', 'resident_address', 'portrait', 'issuing_country',
+    'given_name', 'family_name', 'birth_date', 'nationality',
 ];
 
 $dcqlQuery = [
