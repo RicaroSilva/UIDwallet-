@@ -325,7 +325,12 @@ app.post('/api/checkout', async (req, res) => {
 
   pendingPayments.set(transactionData.transaction_id, proofPackage)
 
-  const qrPayload = `openid4vp://authorize?transaction_id=${transactionData.transaction_id}&amount=${transactionData.amount}&currency=${transactionData.currency}`
+  // Deliberately NOT an "openid4vp://" URI: real wallet apps (e.g. Paradym)
+  // register that scheme and will try to process this as a genuine
+  // authorization request, then reject it since it's missing required
+  // fields. This QR is a visual stand-in only -- it carries no protocol
+  // meaning, just a demo reference string.
+  const qrPayload = `LUSOPAY-DEMO:${transactionData.transaction_id}:${transactionData.amount}:${transactionData.currency}`
   const qrCodeDataUrl = await QRCode.toDataURL(qrPayload, { margin: 1, width: 260 })
 
   log(
