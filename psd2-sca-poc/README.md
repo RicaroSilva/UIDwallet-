@@ -12,10 +12,15 @@ Simulação local do fluxo *third-party requested* descrito na spec PaSO
 - **`authorizing-party.js`** — mock do banco. Valida os campos obrigatórios,
   recalcula o hash do `transaction_data` (verificação de dynamic linking) e
   confirma que existem pelo menos dois fatores de autenticação
-  independentes, antes de autorizar ou rejeitar.
+  independentes, antes de autorizar ou rejeitar. Depois de autorizar, notifica
+  o backend LusoPay/Cyclos (ver abaixo).
+- **`cyclos-mock.js`** — servidor Express local que imita a rota
+  `POST /web/run/adduidpayment` do backend Cyclos real, para se poder testar
+  essa notificação sem depender de rede externa.
 
-Os três comunicam por HTTP simples em `localhost` — sem HTTPS, sem
-exposição externa, sem dependências além do Node.js.
+Os três primeiros comunicam por HTTP simples em `localhost` — sem HTTPS, sem
+exposição externa. O `cyclos-mock.js` usa Express (única dependência do
+projeto).
 
 ## Correr
 
@@ -23,11 +28,36 @@ exposição externa, sem dependências além do Node.js.
 node merchant.js
 ```
 
-Este comando arranca automaticamente o `lusopay-router.js` (porta 4001) e o
-`authorizing-party.js` (porta 4002) como processos filho, espera que fiquem
-disponíveis, e depois envia o pedido de pagamento. Os logs de todos os três
-aparecem no mesmo terminal, prefixados por papel
-(`[MERCHANT]`, `[LUSOPAY-ROUTER]`, `[AUTHORIZING-PARTY]`).
+Este comando arranca automaticamente o `lusopay-router.js` (porta 4001), o
+`authorizing-party.js` (porta 4002) e o `cyclos-mock.js` (porta 4003) como
+processos filho, espera que fiquem disponíveis, e depois envia o pedido de
+pagamento. Os logs de todos aparecem no mesmo terminal, prefixados por papel
+(`[MERCHANT]`, `[LUSOPAY-ROUTER]`, `[AUTHORIZING-PARTY]`, `[CYCLOS-MOCK]`).
+
+## Notificação ao backend Cyclos
+
+Depois de autorizar uma transação, `authorizing-party.js` faz um `POST` para
+`CYCLOS_ENDPOINT` (constante no topo do ficheiro), atualmente definida para o
+dev server real:
+
+```
+https://dev.lusopay.com:8444/web_dev/run/adduidpayment
+```
+
+com o corpo `{ publicId, amount, currency, description, transactionId }`
+extraído do `transaction_data` já validado (`publicId` = `user_id` do proof
+package). Este pedido é *best-effort*: se falhar (rede em baixo, dev server
+inacessível), o erro é registado no terminal mas a decisão de autorização já
+tomada não é revertida.
+
+Nota: neste momento este endereço não está acessível a partir deste
+ambiente (a ligação TLS é interrompida a meio do handshake). Se quiseres
+testar a notificação localmente antes de apontar ao dev server real, muda
+temporariamente `CYCLOS_ENDPOINT` em `authorizing-party.js` para
+`http://localhost:4003/web/run/adduidpayment` — mas nota que o caminho da
+rota no `cyclos-mock.js` é `/web/run/adduidpayment`, enquanto o dev server
+real usa `/web_dev/run/adduidpayment` (prefixo diferente); confirma qual dos
+dois é o correto antes de ligar a um ambiente real.
 
 ## Cenários de falha
 

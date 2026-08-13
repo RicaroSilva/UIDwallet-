@@ -3,10 +3,10 @@
 // (urn:eudi:sca:payment:1) plus a fictitious wallet holder binding proof,
 // then sends the resulting proof package to the LusoPay Router.
 //
-// For convenience this single entry point also starts the other two
-// services (lusopay-router.js and authorizing-party.js) as child processes,
-// so the whole three-party flow can be observed with just `node merchant.js`.
-// They still talk to each other over real localhost HTTP, exactly as three
+// For convenience this single entry point also starts the other services
+// (lusopay-router.js, authorizing-party.js, and cyclos-mock.js) as child
+// processes, so the whole flow can be observed with just `node merchant.js`.
+// They still talk to each other over real localhost HTTP, exactly as
 // independently deployed services would.
 
 const { spawn } = require('child_process')
@@ -17,6 +17,7 @@ const crypto = require('crypto')
 const ROUTER_URL = 'http://localhost:4001/proof-package'
 const ROUTER_PORT = 4001
 const AUTHORIZING_PARTY_PORT = 4002
+const CYCLOS_MOCK_PORT = 4003
 
 const args = process.argv.slice(2)
 const scenario = {
@@ -93,13 +94,15 @@ function buildHolderBindingProof(transactionData) {
 }
 
 async function main() {
-  log('starting LusoPay Router and Authorizing Party mock...')
+  log('starting LusoPay Router, Authorizing Party mock, and Cyclos mock...')
   const router = spawnService('lusopay-router.js', 'lusopay-router.js')
   const authorizingParty = spawnService('authorizing-party.js', 'authorizing-party.js')
+  const cyclosMock = spawnService('cyclos-mock.js', 'cyclos-mock.js')
 
   const shutdown = () => {
     router.kill()
     authorizingParty.kill()
+    cyclosMock.kill()
   }
   process.on('SIGINT', () => {
     shutdown()
@@ -107,7 +110,11 @@ async function main() {
   })
 
   try {
-    await Promise.all([waitForPort(ROUTER_PORT), waitForPort(AUTHORIZING_PARTY_PORT)])
+    await Promise.all([
+      waitForPort(ROUTER_PORT),
+      waitForPort(AUTHORIZING_PARTY_PORT),
+      waitForPort(CYCLOS_MOCK_PORT),
+    ])
   } catch (error) {
     log(`services failed to start: ${error.message}`)
     shutdown()

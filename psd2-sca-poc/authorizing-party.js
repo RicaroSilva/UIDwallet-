@@ -7,6 +7,7 @@ const http = require('http')
 const crypto = require('crypto')
 
 const PORT = 4002
+const CYCLOS_ENDPOINT = 'https://dev.lusopay.com:8444/web_dev/run/adduidpayment'
 
 function log(message) {
   console.log(`[AUTHORIZING-PARTY] ${message}`)
@@ -67,6 +68,29 @@ function validateProofPackage(proofPackage) {
   return { valid: true, errors: [] }
 }
 
+async function notifyCyclos(userId, transactionData) {
+  const cyclosPayload = {
+    publicId: userId,
+    amount: transactionData.amount,
+    currency: transactionData.currency,
+    description: `Payment to ${transactionData.payee}`,
+    transactionId: transactionData.transaction_id,
+  }
+
+  log(`notifying LusoPay/Cyclos backend at ${CYCLOS_ENDPOINT}...`)
+  try {
+    const response = await fetch(CYCLOS_ENDPOINT, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(cyclosPayload),
+    })
+    const result = await response.json().catch(() => ({}))
+    log(`Cyclos backend responded with HTTP ${response.status}: ${JSON.stringify(result)}`)
+  } catch (error) {
+    log(`failed to reach Cyclos backend: ${error.message}`)
+  }
+}
+
 const server = http.createServer(async (req, res) => {
   if (req.method !== 'POST' || req.url !== '/authorize') {
     res.writeHead(404, { 'Content-Type': 'application/json' })
@@ -109,6 +133,8 @@ const server = http.createServer(async (req, res) => {
   log('  dynamic linking: OK (transaction_data_hash verified)')
   log('-------------------------------')
   log(`AUTHORIZED transaction ${transactionId}`)
+
+  await notifyCyclos(proofPackage.user_id, transactionData)
 
   res.writeHead(200, { 'Content-Type': 'application/json' })
   res.end(
