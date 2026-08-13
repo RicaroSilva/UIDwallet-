@@ -17,12 +17,15 @@ Simulação local do fluxo *third-party requested* descrito na spec PaSO
 - **`cyclos-mock.js`** — servidor Express local que imita a rota
   `POST /web/run/adduidpayment` do backend Cyclos real, para se poder testar
   essa notificação sem depender de rede externa.
+- **`storefront.js`** — página web simples (carrinho com 1 produto) para
+  disparar o fluxo interativamente, em vez de pela linha de comandos. Ver
+  secção "Loja (interface visual)" abaixo.
 
-Os três primeiros comunicam por HTTP simples em `localhost` — sem HTTPS, sem
-exposição externa. O `cyclos-mock.js` usa Express (única dependência do
-projeto).
+Os serviços de backend comunicam por HTTP simples em `localhost` — sem
+HTTPS, sem exposição externa. `cyclos-mock.js` e `storefront.js` usam
+Express (dependências do projeto).
 
-## Correr
+## Correr (linha de comandos)
 
 ```bash
 node merchant.js
@@ -33,6 +36,31 @@ Este comando arranca automaticamente o `lusopay-router.js` (porta 4001), o
 processos filho, espera que fiquem disponíveis, e depois envia o pedido de
 pagamento. Os logs de todos aparecem no mesmo terminal, prefixados por papel
 (`[MERCHANT]`, `[LUSOPAY-ROUTER]`, `[AUTHORIZING-PARTY]`, `[CYCLOS-MOCK]`).
+
+## Loja (interface visual)
+
+```bash
+node storefront.js
+```
+
+Abre `http://localhost:4000` no browser. Mostra um carrinho com 1 produto
+onde podes editar o nome, o valor e o teu Public ID (o `user_id` que o
+`lusopay-router.js` usa para escolher o banco — usa `user-1001` ou
+`user-2002`, os únicos presentes em `bank-registry.json`). Ao clicar em
+"Pagar com LusoPay / Carteira Digital":
+
+1. É gerado o `transaction_data` e a holder binding proof fictícia, e é
+   mostrado um QR code (gerado localmente, sem depender de nenhum serviço
+   externo) que simula o pedido de autorização OpenID4VP.
+2. Como não há uma wallet real a integrar, o botão "Simular confirmação na
+   Wallet" faz o papel do utilizador autenticar-se na wallet e devolver a
+   prova — é aí que o proof package é enviado ao `lusopay-router.js`,
+   seguindo exatamente o mesmo caminho do `merchant.js`.
+3. O resultado final (autorizado ou rejeitado, com o motivo) aparece no
+   carrinho.
+
+Tal como `merchant.js`, o `storefront.js` arranca automaticamente o router,
+o authorizing party e o cyclos mock.
 
 ## Notificação ao backend Cyclos
 

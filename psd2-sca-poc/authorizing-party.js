@@ -83,6 +83,7 @@ async function notifyCyclos(userId, transactionData) {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(cyclosPayload),
+      signal: AbortSignal.timeout(4000),
     })
     const result = await response.json().catch(() => ({}))
     log(`Cyclos backend responded with HTTP ${response.status}: ${JSON.stringify(result)}`)
