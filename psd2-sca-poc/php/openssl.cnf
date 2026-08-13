@@ -1,8 +1,5 @@
-HOME = .
-RANDFILE = $ENV::HOME/.rnd
-
 [ req ]
-default_bits = 2048
+default_bits = 256
 distinguished_name = req_distinguished_name
 
 [ req_distinguished_name ]

@@ -167,24 +167,31 @@ function base64url_encode(string $data): string
 function get_signing_key(): array
 {
     $keyPath = __DIR__ . '/../keys/signing-key.pem';
-    // Some Windows PHP installs don't have openssl.cnf configured in
-    // php.ini, which makes openssl_pkey_new() fail with "no such file"
-    // even though it doesn't need any custom config for EC keygen. Passing
-    // our own minimal file avoids depending on server-wide php.ini changes.
-    $opensslConfig = __DIR__ . '/../openssl.cnf';
+
+    // Some Windows PHP installs don't have openssl.cnf configured, which
+    // makes openssl_pkey_new() fail outright ("no such file"). Passing a
+    // 'config' option directly to openssl_pkey_new/export works around
+    // that but pushes PHP's openssl binding down a config-driven code path
+    // that (at least on the version tested) misapplies an RSA-style
+    // "default_bits" minimum-length check to EC keys too. Setting the
+    // OPENSSL_CONF and RANDFILE environment variables instead avoids both
+    // problems: the library gets a config file to satisfy its own checks,
+    // but openssl_pkey_new() itself still takes the plain (non-'config')
+    // code path that correctly honours private_key_type/curve_name.
+    putenv('OPENSSL_CONF=' . __DIR__ . '/../openssl.cnf');
+    putenv('RANDFILE=' . sys_get_temp_dir() . '/lusopay-openssl-rand.tmp');
 
     if (is_file($keyPath)) {
-        $privateKey = openssl_pkey_get_private(file_get_contents($keyPath), null, ['config' => $opensslConfig]);
+        $privateKey = openssl_pkey_get_private(file_get_contents($keyPath));
     } else {
         $privateKey = openssl_pkey_new([
             'private_key_type' => OPENSSL_KEYTYPE_EC,
             'curve_name' => 'prime256v1',
-            'config' => $opensslConfig,
         ]);
         if ($privateKey === false) {
             throw new RuntimeException('openssl_pkey_new failed: ' . openssl_error_string());
         }
-        openssl_pkey_export($privateKey, $pem, null, ['config' => $opensslConfig]);
+        openssl_pkey_export($privateKey, $pem);
         if (!is_dir(dirname($keyPath))) {
             mkdir(dirname($keyPath), 0700, true);
         }
