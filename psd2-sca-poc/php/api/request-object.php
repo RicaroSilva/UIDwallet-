@@ -2,17 +2,14 @@
 // api/request-object.php
 // EXPERIMENTAL: serves the authorization request object that
 // verify-test.php stashed on disk, for the wallet to fetch by reference
-// (request_uri). RFC 9101 (JAR) requires request objects delivered this way
-// to be a JWT -- even when, as here, the client_id scheme is "redirect_uri"
-// and no signature verification is expected. So this wraps the JSON payload
-// as an unsigned JWT (alg: none) rather than returning plain JSON.
+// (request_uri). RFC 9101 (JAR) requires this to be a JWT; the wallet
+// rejected an unsigned (alg: none) one, so this signs it with ES256 using a
+// throwaway key (no x509 trust chain -- the "redirect_uri" client_id scheme
+// doesn't require the wallet to trust the signer, only that the signature
+// is internally valid).
 
 declare(strict_types=1);
-
-function base64url_encode(string $data): string
-{
-    return rtrim(strtr(base64_encode($data), '+/', '-_'), '=');
-}
+require __DIR__ . '/../vendor/autoload.php';
 
 $session = $_GET['session'] ?? '';
 $path = __DIR__ . "/../request-store/{$session}.json";
@@ -25,10 +22,7 @@ if ($session === '' || !ctype_alnum(str_replace(['-', '_'], '', $session)) || !i
     exit;
 }
 
-$payload = file_get_contents($path);
-
-$header = base64url_encode(json_encode(['alg' => 'none', 'typ' => 'oauth-authz-req+jwt']));
-$body = base64url_encode($payload);
+$payload = json_decode(file_get_contents($path), true);
 
 header('Content-Type: application/oauth-authz-req+jwt');
-echo "{$header}.{$body}.";
+echo sign_request_object_jwt($payload);

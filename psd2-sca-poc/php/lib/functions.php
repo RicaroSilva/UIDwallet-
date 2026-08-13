@@ -151,6 +151,95 @@ function notify_cyclos(string $publicId, array $transactionData): void
     error_log("[LUSOPAY-CHECKOUT] Cyclos backend responded with HTTP {$status}: {$response}");
 }
 
+function base64url_encode(string $data): string
+{
+    return rtrim(strtr(base64_encode($data), '+/', '-_'), '=');
+}
+
+/**
+ * Loads the EC P-256 signing key used for request objects, generating and
+ * persisting it on first use. This key is NOT trust-anchored (no x509
+ * certificate) -- it exists only so requests delivered via request_uri are
+ * structurally valid, signed JWTs, matching what RFC 9101 (JAR) requires,
+ * for the "redirect_uri" client_id scheme where the wallet does not need to
+ * verify the signer's identity, only that the object is well-formed.
+ */
+function get_signing_key(): array
+{
+    $keyPath = __DIR__ . '/../keys/signing-key.pem';
+
+    if (is_file($keyPath)) {
+        $privateKey = openssl_pkey_get_private(file_get_contents($keyPath));
+    } else {
+        $privateKey = openssl_pkey_new([
+            'private_key_type' => OPENSSL_KEYTYPE_EC,
+            'curve_name' => 'prime256v1',
+        ]);
+        openssl_pkey_export($privateKey, $pem);
+        if (!is_dir(dirname($keyPath))) {
+            mkdir(dirname($keyPath), 0700, true);
+        }
+        file_put_contents($keyPath, $pem);
+        chmod($keyPath, 0600);
+    }
+
+    $details = openssl_pkey_get_details($privateKey);
+
+    return [
+        'private_key' => $privateKey,
+        'jwk' => [
+            'kty' => 'EC',
+            'crv' => 'P-256',
+            'x' => base64url_encode($details['ec']['x']),
+            'y' => base64url_encode($details['ec']['y']),
+        ],
+    ];
+}
+
+function der_ecdsa_signature_to_jose(string $der, int $componentLength = 32): string
+{
+    $offset = 1; // skip SEQUENCE tag (0x30)
+    $offset += (ord($der[1]) & 0x80) ? 1 + (ord($der[1]) & 0x7f) : 1; // skip sequence length
+
+    $readInteger = function (string $der, int &$offset) {
+        $offset++; // skip INTEGER tag (0x02)
+        $len = ord($der[$offset]);
+        $offset++;
+        $value = ltrim(substr($der, $offset, $len), "\x00");
+        $offset += $len;
+        return $value;
+    };
+
+    $r = $readInteger($der, $offset);
+    $s = $readInteger($der, $offset);
+
+    return str_pad($r, $componentLength, "\x00", STR_PAD_LEFT) . str_pad($s, $componentLength, "\x00", STR_PAD_LEFT);
+}
+
+/**
+ * Signs a JWT with ES256, embedding the public key as a "jwk" header
+ * parameter so the wallet can verify the signature is internally valid
+ * without needing a pre-registered or trust-anchored key.
+ */
+function sign_request_object_jwt(array $payload): string
+{
+    $signingKey = get_signing_key();
+
+    $header = [
+        'alg' => 'ES256',
+        'typ' => 'oauth-authz-req+jwt',
+        'jwk' => $signingKey['jwk'],
+    ];
+
+    $signingInput = base64url_encode(json_encode($header, JSON_UNESCAPED_SLASHES))
+        . '.' . base64url_encode(json_encode($payload, JSON_UNESCAPED_SLASHES));
+
+    openssl_sign($signingInput, $derSignature, $signingKey['private_key'], OPENSSL_ALGO_SHA256);
+    $joseSignature = der_ecdsa_signature_to_jose($derSignature);
+
+    return $signingInput . '.' . base64url_encode($joseSignature);
+}
+
 function qr_code_data_uri(string $payload): string
 {
     $qrCode = new \Endroid\QrCode\QrCode($payload);
