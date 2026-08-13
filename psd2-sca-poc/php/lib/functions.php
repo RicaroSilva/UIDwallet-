@@ -157,46 +157,33 @@ function base64url_encode(string $data): string
 }
 
 /**
- * Loads the EC P-256 signing key used for request objects, generating and
- * persisting it on first use. This key is NOT trust-anchored (no x509
- * certificate) -- it exists only so requests delivered via request_uri are
- * structurally valid, signed JWTs, matching what RFC 9101 (JAR) requires,
- * for the "redirect_uri" client_id scheme where the wallet does not need to
- * verify the signer's identity, only that the object is well-formed.
+ * Loads the EC P-256 signing key used for request objects. This key is NOT
+ * trust-anchored (no x509 certificate) -- it exists only so requests
+ * delivered via request_uri are structurally valid, signed JWTs, matching
+ * what RFC 9101 (JAR) requires, for the "redirect_uri" client_id scheme
+ * where the wallet does not need to verify the signer's identity, only
+ * that the object is well-formed. Because nothing depends on this specific
+ * key's secrecy, it's a fixed key committed to the repo (keys/signing-key.pem)
+ * rather than generated at runtime: openssl_pkey_new() (key GENERATION)
+ * fails with "system library: No such process" on at least one deployment
+ * target's OpenSSL build, while loading an existing key and signing with
+ * it both work fine there. Generate a replacement with:
+ *   openssl ecparam -name prime256v1 -genkey -noout -out keys/signing-key.pem
  */
 function get_signing_key(): array
 {
     $keyPath = __DIR__ . '/../keys/signing-key.pem';
 
-    // Some Windows PHP installs don't have openssl.cnf configured, which
-    // makes openssl_pkey_new() fail outright ("no such file"). Passing a
-    // 'config' option directly to openssl_pkey_new/export works around
-    // that but pushes PHP's openssl binding down a config-driven code path
-    // that (at least on the version tested) misapplies an RSA-style
-    // "default_bits" minimum-length check to EC keys too. Setting the
-    // OPENSSL_CONF and RANDFILE environment variables instead avoids both
-    // problems: the library gets a config file to satisfy its own checks,
-    // but openssl_pkey_new() itself still takes the plain (non-'config')
-    // code path that correctly honours private_key_type/curve_name.
-    putenv('OPENSSL_CONF=' . __DIR__ . '/../openssl.cnf');
-    putenv('RANDFILE=' . sys_get_temp_dir() . '/lusopay-openssl-rand.tmp');
+    if (!is_file($keyPath)) {
+        throw new RuntimeException(
+            "signing key not found at {$keyPath} -- generate one with: " .
+            'openssl ecparam -name prime256v1 -genkey -noout -out keys/signing-key.pem'
+        );
+    }
 
-    if (is_file($keyPath)) {
-        $privateKey = openssl_pkey_get_private(file_get_contents($keyPath));
-    } else {
-        $privateKey = openssl_pkey_new([
-            'private_key_type' => OPENSSL_KEYTYPE_EC,
-            'curve_name' => 'prime256v1',
-        ]);
-        if ($privateKey === false) {
-            throw new RuntimeException('openssl_pkey_new failed: ' . openssl_error_string());
-        }
-        openssl_pkey_export($privateKey, $pem);
-        if (!is_dir(dirname($keyPath))) {
-            mkdir(dirname($keyPath), 0700, true);
-        }
-        file_put_contents($keyPath, $pem);
-        chmod($keyPath, 0600);
+    $privateKey = openssl_pkey_get_private(file_get_contents($keyPath));
+    if ($privateKey === false) {
+        throw new RuntimeException('openssl_pkey_get_private failed: ' . openssl_error_string());
     }
 
     $details = openssl_pkey_get_details($privateKey);
