@@ -1,0 +1,10 @@
+{
+  "user-1001": {
+    "bank": "Banco Lusitano",
+    "iban": "PT50000201231234567890154"
+  },
+  "user-2002": {
+    "bank": "Caixa Real",
+    "iban": "PT50003522204040484620053"
+  }
+}

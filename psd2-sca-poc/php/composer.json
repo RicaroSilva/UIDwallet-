@@ -1,0 +1,12 @@
+{
+    "name": "lusopay/checkout",
+    "description": "LusoPay Checkout service (PSD2 / EUDI Wallet SCA simulation) - PHP port",
+    "type": "project",
+    "require": {
+        "php": ">=8.1",
+        "endroid/qr-code": "^5.0"
+    },
+    "autoload": {
+        "files": ["lib/functions.php"]
+    }
+}
