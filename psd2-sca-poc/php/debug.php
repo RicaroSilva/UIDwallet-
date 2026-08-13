@@ -69,5 +69,25 @@ if (is_dir($testDir)) {
     @unlink($testDir . '/test.txt');
     @rmdir($testDir);
 }
+flush();
+
+echo "8. Testing LOADING a pre-generated key (not generating one) + signing with it...\n";
+flush();
+$preGeneratedPem = <<<'PEM'
+-----BEGIN EC PRIVATE KEY-----
+MHcCAQEEIAxemvLL/sZZRKB2uUkfNqo/4M0URCrLm7aPCJrPRmJ5oAoGCCqGSM49
+AwEHoUQDQgAEEIaUCP9+8Zk7Act7avy6+4o1UWQHzMipcPK0sSwkLXIj98HEpgmf
+M2nEaWL0YKkafBE4BDWDBFT6pXjnrnKMKg==
+-----END EC PRIVATE KEY-----
+PEM;
+$loadedKey = @openssl_pkey_get_private($preGeneratedPem);
+if ($loadedKey === false) {
+    echo "    LOAD FAILED: " . openssl_error_string() . "\n";
+} else {
+    echo "    load OK\n";
+    flush();
+    $signOk = @openssl_sign('test-signing-input', $signature, $loadedKey, OPENSSL_ALGO_SHA256);
+    echo '    sign: ' . ($signOk ? 'OK (' . strlen($signature) . ' bytes)' : 'FAILED: ' . openssl_error_string()) . "\n";
+}
 
 echo "DONE\n";
