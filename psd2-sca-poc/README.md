@@ -17,13 +17,18 @@ Simulação local do fluxo *third-party requested* descrito na spec PaSO
 - **`cyclos-mock.js`** — servidor Express local que imita a rota
   `POST /web/run/adduidpayment` do backend Cyclos real, para se poder testar
   essa notificação sem depender de rede externa.
-- **`storefront.js`** — página web simples (carrinho com 1 produto) para
-  disparar o fluxo interativamente, em vez de pela linha de comandos. Ver
-  secção "Loja (interface visual)" abaixo.
+- **`lusopay-checkout.js`** — o serviço LusoPay Checkout em si: qualquer site
+  integra-se com ele só redirecionando o comprador para
+  `GET /checkout?amount=...&publicId=...&...`, sem SDK nem API keys. Arranca
+  o router, o authorizing party e o cyclos mock, mostra o QR e a confirmação
+  da wallet, e envia o proof package pelo mesmo caminho do `merchant.js`.
+- **`storefront.js`** — exemplo de site parceiro (carrinho com 1 produto). Ao
+  clicar em "Pagar", só redireciona o browser para o `lusopay-checkout.js` —
+  não sabe nada sobre `transaction_data`, provas, ou o backend LusoPay.
 
 Os serviços de backend comunicam por HTTP simples em `localhost` — sem
-HTTPS, sem exposição externa. `cyclos-mock.js` e `storefront.js` usam
-Express (dependências do projeto).
+HTTPS, sem exposição externa. `cyclos-mock.js`, `storefront.js` e
+`lusopay-checkout.js` usam Express (dependências do projeto).
 
 ## Correr (linha de comandos)
 
@@ -37,30 +42,51 @@ processos filho, espera que fiquem disponíveis, e depois envia o pedido de
 pagamento. Os logs de todos aparecem no mesmo terminal, prefixados por papel
 (`[MERCHANT]`, `[LUSOPAY-ROUTER]`, `[AUTHORIZING-PARTY]`, `[CYCLOS-MOCK]`).
 
-## Loja (interface visual)
+## Loja (interface visual, multi-site)
+
+Precisas de **dois processos** separados (o serviço LusoPay, e o site
+parceiro de exemplo):
 
 ```bash
+# terminal 1 -- o serviço LusoPay (backend + página de checkout)
+node lusopay-checkout.js
+
+# terminal 2 -- um site parceiro qualquer que o integra
 node storefront.js
 ```
 
-Abre `http://localhost:4000` no browser. Mostra um carrinho com 1 produto
-onde podes editar o nome, o valor e o teu Public ID (o `user_id` que o
-`lusopay-router.js` usa para escolher o banco — usa `user-1001` ou
-`user-2002`, os únicos presentes em `bank-registry.json`). Ao clicar em
-"Pagar com LusoPay / Carteira Digital":
+Abre `http://localhost:4000` no browser (a loja). Ao clicar em "Pagar com
+LusoPay / Carteira Digital":
 
-1. É gerado o `transaction_data` e a holder binding proof fictícia, e é
-   mostrado um QR code (gerado localmente, sem depender de nenhum serviço
-   externo) que simula o pedido de autorização OpenID4VP.
-2. Como não há uma wallet real a integrar, o botão "Simular confirmação na
-   Wallet" faz o papel do utilizador autenticar-se na wallet e devolver a
-   prova — é aí que o proof package é enviado ao `lusopay-router.js`,
-   seguindo exatamente o mesmo caminho do `merchant.js`.
-3. O resultado final (autorizado ou rejeitado, com o motivo) aparece no
-   carrinho.
+1. O browser é **redirecionado** para
+   `http://localhost:4004/checkout?amount=...&description=...&merchant=...&return_url=...`
+   — é assim que qualquer site se integra: sem SDK, sem API key, só um
+   redirecionamento com estes parâmetros na query string.
+2. Na página do LusoPay, escreves o teu **Public ID** (`user-1001` ou
+   `user-2002`, os únicos presentes em `bank-registry.json`) e clicas em
+   pagar. É gerado o `transaction_data` e a holder binding proof fictícia, e
+   aparece um QR code (gerado localmente) que simula o pedido de autorização
+   OpenID4VP.
+3. Como não há uma wallet real a integrar, o botão "Simular confirmação na
+   Wallet" faz o papel do utilizador a autenticar-se e devolver a prova — é
+   aí que o proof package é enviado ao `lusopay-router.js`, seguindo
+   exatamente o mesmo caminho do `merchant.js`.
+4. O resultado aparece na página do LusoPay, com um botão "Voltar a
+   `<lojista>`" que reencaminha o browser de volta ao `return_url` que o
+   site parceiro indicou, com o resultado (`status`, `transaction_id`) na
+   query string — é assim que o site parceiro sabe o desfecho, sem
+   precisares de bases de dados nem webhooks.
 
-Tal como `merchant.js`, o `storefront.js` arranca automaticamente o router,
-o authorizing party e o cyclos mock.
+Nota importante: o QR gerado é apenas um **elemento visual** (uma string sem
+significado de protocolo) — não uses o esquema `openid4vp://` nele. Uma
+wallet real (como a Paradym) reconhece esse esquema e tenta processar o
+conteúdo como um pedido genuíno de OpenID4VP, falhando porque faltam campos
+obrigatórios (`response_uri`, assinatura, etc.). Construir um QR realmente
+funcional exigiria um verificador OpenID4VP completo exposto em HTTPS
+pública — fora do âmbito desta simulação local.
+
+Só `lusopay-checkout.js` arranca o router, o authorizing party e o cyclos
+mock; `storefront.js` não tem nenhuma dependência do backend LusoPay.
 
 ## Notificação ao backend Cyclos
 
