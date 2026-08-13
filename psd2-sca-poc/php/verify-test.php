@@ -54,19 +54,19 @@ $state = base64url_random();
 // wallet match whichever format it actually holds.
 $PID_MDOC_NAMESPACE = 'eu.europa.ec.eudi.pid.1';
 
+// Curated subset, not literally every claim: with all ~34 fields the
+// request URI got long enough (~5000 chars) that something in the
+// phone/browser/app hand-off corrupted it in transit (a dcql format value
+// arrived as "dc sd-jwt" instead of "dc+sd-jwt", even though our own
+// encoding was verified correct). Keeping this comfortably short avoids
+// that, same as the QR "Data too big" limit -- both are real ceilings on
+// how much a single request can carry.
 $sdJwtClaimNames = [
-    'given_name', 'family_name', 'birthdate', 'place_of_birth', 'nationalities',
-    'address', 'portrait', 'date_of_expiry', 'issuing_authority', 'issuing_country',
-    'date_of_issuance',
+    'given_name', 'family_name', 'birthdate', 'nationalities', 'address', 'portrait', 'issuing_country',
 ];
 
 $mdocClaimNames = [
-    'given_name', 'family_name', 'birth_date', 'place_of_birth', 'nationality',
-    'resident_address', 'resident_country', 'resident_state', 'resident_city',
-    'resident_postal_code', 'resident_street', 'resident_house_number',
-    'personal_administrative_number', 'portrait', 'family_name_birth', 'given_name_birth',
-    'sex', 'email_address', 'mobile_phone_number', 'expiry_date', 'issuing_authority',
-    'issuing_country', 'document_number', 'issuance_date',
+    'given_name', 'family_name', 'birth_date', 'nationality', 'resident_address', 'portrait', 'issuing_country',
 ];
 
 $dcqlQuery = [
