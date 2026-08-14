@@ -10,8 +10,17 @@ require __DIR__ . '/vendor/autoload.php';
 $name = $_GET['name'] ?? 'Ricardo Silva';
 $lusopayId = $_GET['id'] ?? '76';
 $email = $_GET['email'] ?? 'ricardo.silva@lusopay.com';
+// Set by the Cyclos custom operation's script (its "returnUrl" binding,
+// forwarded through here) -- when present, we poll until the wallet has
+// actually accepted the credential and then send the browser back there.
+$cyclosReturn = $_GET['cyclos_return'] ?? null;
 
 $preAuthCode = create_issuance_session(['name' => $name, 'lusopay_id' => $lusopayId, 'email' => $email]);
+
+$scheme = (($_SERVER['HTTPS'] ?? '') !== '') ? 'https' : 'http';
+$host = $_SERVER['HTTP_HOST'];
+$basePath = rtrim(str_replace('issue-test.php', '', $_SERVER['SCRIPT_NAME']), '/');
+$statusUri = "{$scheme}://{$host}{$basePath}/api/issuance-status.php?code={$preAuthCode}";
 
 $credentialOffer = [
     'credential_issuer' => LUSOPAY_ISSUER_URL,
@@ -54,6 +63,9 @@ $qrCodeDataUrl = qr_code_data_uri($offerUri);
     <img src="<?= $qrCodeDataUrl ?>" alt="QR" />
     <p class="hint">Ou digitaliza este QR de outro dispositivo.</p>
 
+    <p class="hint" id="statusBox">⏳ A aguardar que aceites o cartão na wallet...</p>
+
+    <?php if (!$cyclosReturn): ?>
     <form method="get">
       <label for="name">Nome</label>
       <input type="text" id="name" name="name" value="<?= escape_html($name) ?>" />
@@ -63,6 +75,31 @@ $qrCodeDataUrl = qr_code_data_uri($offerUri);
       <input type="text" id="email" name="email" value="<?= escape_html($email) ?>" />
       <button type="submit">Gerar nova oferta</button>
     </form>
+    <?php endif; ?>
   </div>
+
+<script>
+  const STATUS_URL = <?= json_encode($statusUri) ?>
+  const CYCLOS_RETURN = <?= json_encode($cyclosReturn) ?>
+
+  async function poll() {
+    try {
+      const response = await fetch(STATUS_URL)
+      const data = await response.json()
+      if (data.status === 'ISSUED') {
+        document.getElementById('statusBox').textContent = '✅ Cartão aceite na wallet.'
+        if (CYCLOS_RETURN) {
+          window.location.href = CYCLOS_RETURN
+        }
+        return
+      }
+    } catch (error) {
+      // keep polling -- a transient network hiccup shouldn't stop the flow
+    }
+    setTimeout(poll, 2000)
+  }
+
+  poll()
+</script>
 </body>
 </html>

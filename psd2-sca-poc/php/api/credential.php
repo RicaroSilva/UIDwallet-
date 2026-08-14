@@ -69,6 +69,9 @@ if (($proofPayload['nonce'] ?? null) !== $session['c_nonce']) {
 }
 
 $credential = build_sd_jwt_vc(LUSOPAY_CREDENTIAL_VCT, $session['claims'], $holderJwk);
+if (isset($session['issuance_code'])) {
+    mark_issuance_status($session['issuance_code'], 'ISSUED');
+}
 consume_issuance_session($accessToken);
 
 // A request using the plural "proofs" form must get back the plural

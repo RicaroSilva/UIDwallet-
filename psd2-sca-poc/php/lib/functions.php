@@ -287,19 +287,25 @@ function issuance_store_path(string $key): string
 
 /**
  * Starts a new issuance session for the given claims and returns the
- * pre-authorized_code to embed in the credential offer.
+ * pre-authorized_code to embed in the credential offer. Also seeds a
+ * PENDING status row under that same code -- unlike the code/token rows
+ * (deleted once consumed), this one survives so issue-test.php can poll
+ * it and find out once the wallet has actually accepted the credential.
  */
 function create_issuance_session(array $claims): string
 {
     $code = bin2hex(random_bytes(16));
     file_put_contents(issuance_store_path("code-{$code}"), json_encode(['claims' => $claims]));
+    mark_issuance_status($code, 'PENDING');
     return $code;
 }
 
 /**
  * Exchanges a pre-authorized_code for an access_token + c_nonce, per the
  * OpenID4VCI pre-authorized_code token grant. Single-use: the code is
- * consumed and replaced by a token-keyed session.
+ * consumed and replaced by a token-keyed session. The original code
+ * travels along inside the token session so api/credential.php can later
+ * mark that code's status ISSUED once it actually builds the credential.
  */
 function exchange_pre_authorized_code(string $code): ?array
 {
@@ -315,6 +321,7 @@ function exchange_pre_authorized_code(string $code): ?array
     file_put_contents(issuance_store_path("token-{$accessToken}"), json_encode([
         'claims' => $session['claims'],
         'c_nonce' => $cNonce,
+        'issuance_code' => $code,
     ]));
 
     return ['access_token' => $accessToken, 'c_nonce' => $cNonce];
@@ -332,6 +339,21 @@ function get_issuance_session_by_access_token(string $accessToken): ?array
 function consume_issuance_session(string $accessToken): void
 {
     @unlink(issuance_store_path("token-{$accessToken}"));
+}
+
+function mark_issuance_status(string $code, string $status): void
+{
+    file_put_contents(issuance_store_path("status-{$code}"), json_encode(['status' => $status]));
+}
+
+function get_issuance_status(string $code): string
+{
+    $path = issuance_store_path("status-{$code}");
+    if (!is_file($path)) {
+        return 'PENDING';
+    }
+    $data = json_decode(file_get_contents($path), true);
+    return $data['status'] ?? 'PENDING';
 }
 
 /**
