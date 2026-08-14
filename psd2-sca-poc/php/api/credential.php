@@ -27,10 +27,15 @@ if (!$session) {
 }
 
 $body = read_json_body();
-$proofJwt = $body['proof']['jwt'] ?? null;
+// Draft 13+ of OpenID4VCI replaced the singular "proof" with a plural
+// "proofs" object keyed by proof type (e.g. {"jwt": ["<jwt>"]}), to
+// support requesting multiple credential instances in one call. Accept
+// both shapes; only single-JWT proofs are supported here.
+$proofJwt = $body['proof']['jwt'] ?? $body['proofs']['jwt'][0] ?? null;
+$isPluralProofs = isset($body['proofs']);
 if (!$proofJwt) {
     http_response_code(400);
-    echo json_encode(['error' => 'invalid_proof', 'error_description' => 'missing proof.jwt']);
+    echo json_encode(['error' => 'invalid_proof', 'error_description' => 'missing proof.jwt or proofs.jwt']);
     exit;
 }
 
@@ -66,4 +71,6 @@ if (($proofPayload['nonce'] ?? null) !== $session['c_nonce']) {
 $credential = build_sd_jwt_vc(LUSOPAY_CREDENTIAL_VCT, $session['claims'], $holderJwk);
 consume_issuance_session($accessToken);
 
-echo json_encode(['credential' => $credential]);
+// A request using the plural "proofs" form must get back the plural
+// "credentials" form, per the same draft 13+ change.
+echo json_encode($isPluralProofs ? ['credentials' => [['credential' => $credential]]] : ['credential' => $credential]);
