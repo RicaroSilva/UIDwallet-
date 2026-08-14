@@ -1,0 +1,13 @@
+{
+  "issuer": "https://pay.lusopay.com/uidwallettest/oidc",
+  "authorization_endpoint": "https://pay.lusopay.com/uidwallettest/oidc/authorize.php",
+  "token_endpoint": "https://pay.lusopay.com/uidwallettest/oidc/token.php",
+  "jwks_uri": "https://pay.lusopay.com/uidwallettest/oidc/jwks.json",
+  "response_types_supported": ["code"],
+  "grant_types_supported": ["authorization_code"],
+  "subject_types_supported": ["public"],
+  "id_token_signing_alg_values_supported": ["ES256"],
+  "scopes_supported": ["openid", "profile"],
+  "token_endpoint_auth_methods_supported": ["client_secret_post", "client_secret_basic"],
+  "claims_supported": ["sub", "name", "lusopay_id"]
+}

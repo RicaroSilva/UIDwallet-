@@ -521,3 +521,132 @@ function get_card_presentation(string $session): ?array
     }
     return json_decode(file_get_contents($path), true);
 }
+
+// --- OIDC bridge (Cyclos "generic OpenID Connect" identity provider) --
+// Cyclos's identity provider only knows classic browser-redirect OIDC: it
+// sends the user to an authorization_endpoint expecting a login page, and
+// later calls a token_endpoint for an id_token. There's no such login
+// page here -- oidc/authorize.php shows the same LusoPay Card OpenID4VP
+// QR as pay-with-card.php instead, and only "logs the user in" (issues an
+// authorization code, then an id_token) once the wallet has actually
+// presented the card. Two stores: one row per in-flight browser visit to
+// authorize.php ("session-*"), one row per issued authorization code
+// ("code-*", single-use, exchanged at the token endpoint).
+
+const OIDC_ISSUER = 'https://pay.lusopay.com/uidwallettest/oidc';
+const OIDC_CLIENT_ID = 'lusopay-wallet-idp';
+// Paste this exact value into Cyclos's "Chave secreta" field. Committed
+// here only because this is a test/PoC deployment (same tradeoff as the
+// committed EC signing key above) -- rotate it before any real use.
+const OIDC_CLIENT_SECRET = 'e729d161cadd1d30b93dc41f16bc1fd562b6a1ebec5621a5';
+const OIDC_ALLOWED_REDIRECT_URI = 'https://dev.lusopay.com:8444/web_dev/api/identity-providers/callback';
+const OIDC_SIGNING_KID = 'lusopay-oidc-1';
+const OIDC_STORE_DIR = __DIR__ . '/../oidc-store';
+
+function oidc_store_path(string $key): string
+{
+    if (!is_dir(OIDC_STORE_DIR)) {
+        mkdir(OIDC_STORE_DIR, 0700, true);
+    }
+    // $key is always our own generated random token -- safe as a filename.
+    return OIDC_STORE_DIR . '/' . $key . '.json';
+}
+
+/**
+ * Starts a pending browser session for one visit to oidc/authorize.php,
+ * so oidc/wallet-callback.php (a different request, from the wallet) and
+ * oidc/status.php (polled by the browser) can find it by id.
+ */
+function create_oidc_session(string $redirectUri, string $state, string $nonce): string
+{
+    $oidcSession = bin2hex(random_bytes(16));
+    file_put_contents(oidc_store_path("session-{$oidcSession}"), json_encode([
+        'status' => 'PENDING',
+        'redirect_uri' => $redirectUri,
+        'state' => $state,
+        'nonce' => $nonce,
+        'code' => null,
+    ]));
+    return $oidcSession;
+}
+
+function get_oidc_session(string $oidcSession): ?array
+{
+    $path = oidc_store_path("session-{$oidcSession}");
+    if (!is_file($path)) {
+        return null;
+    }
+    return json_decode(file_get_contents($path), true);
+}
+
+/**
+ * Marks a pending session READY with a freshly issued authorization code,
+ * once the wallet has presented the card. oidc/status.php's polling picks
+ * this up and the browser is redirected back to Cyclos with that code.
+ */
+function complete_oidc_session(string $oidcSession, array $claims): ?string
+{
+    $session = get_oidc_session($oidcSession);
+    if ($session === null) {
+        return null;
+    }
+
+    $code = bin2hex(random_bytes(24));
+    file_put_contents(oidc_store_path("code-{$code}"), json_encode([
+        'claims' => $claims,
+        'nonce' => $session['nonce'],
+    ]));
+
+    $session['status'] = 'READY';
+    $session['code'] = $code;
+    file_put_contents(oidc_store_path("session-{$oidcSession}"), json_encode($session));
+
+    return $code;
+}
+
+/**
+ * Exchanges a single-use authorization code for the claims to embed in
+ * the id_token, per the OAuth2 authorization_code grant.
+ */
+function consume_oidc_authorization_code(string $code): ?array
+{
+    $path = oidc_store_path("code-{$code}");
+    if (!is_file($path)) {
+        return null;
+    }
+    $data = json_decode(file_get_contents($path), true);
+    unlink($path);
+    return $data;
+}
+
+/**
+ * Builds a signed OIDC id_token (ES256, kid matching oidc/jwks.json) for
+ * the given claims. sub is the LusoPay ID -- the one identifier Cyclos
+ * needs to link or create an account.
+ */
+function build_oidc_id_token(array $claims, ?string $nonce): string
+{
+    $signingKey = get_signing_key();
+
+    $header = ['alg' => 'ES256', 'typ' => 'JWT', 'kid' => OIDC_SIGNING_KID];
+    $now = time();
+    $payload = [
+        'iss' => OIDC_ISSUER,
+        'sub' => (string) $claims['lusopay_id'],
+        'aud' => OIDC_CLIENT_ID,
+        'iat' => $now,
+        'exp' => $now + 300,
+        'name' => $claims['name'],
+        'lusopay_id' => $claims['lusopay_id'],
+    ];
+    if ($nonce !== null && $nonce !== '') {
+        $payload['nonce'] = $nonce;
+    }
+
+    $signingInput = base64url_encode(json_encode($header, JSON_UNESCAPED_SLASHES))
+        . '.' . base64url_encode(json_encode($payload, JSON_UNESCAPED_SLASHES));
+
+    openssl_sign($signingInput, $derSignature, $signingKey['private_key'], OPENSSL_ALGO_SHA256);
+
+    return $signingInput . '.' . base64url_encode(der_ecdsa_signature_to_jose($derSignature));
+}

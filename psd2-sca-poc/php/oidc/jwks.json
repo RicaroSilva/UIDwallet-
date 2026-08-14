@@ -1,0 +1,13 @@
+{
+  "keys": [
+    {
+      "kty": "EC",
+      "crv": "P-256",
+      "x": "e5-3-7AoPdXgTSZyraBjGtHTtiplpPAS1tWnElbXibc",
+      "y": "U0d4oabINHLA6Tia5jIOvRNk5sGsI3y67cZb0xRsNy8",
+      "use": "sig",
+      "alg": "ES256",
+      "kid": "lusopay-oidc-1"
+    }
+  ]
+}
