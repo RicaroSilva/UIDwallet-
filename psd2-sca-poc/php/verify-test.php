@@ -21,11 +21,6 @@
 // of scanning the QR when testing on the same phone.
 
 declare(strict_types=1);
-
-// TEMPORARY while debugging the HTTP 500 on the real server.
-ini_set('display_errors', '1');
-error_reporting(E_ALL);
-
 require __DIR__ . '/vendor/autoload.php';
 
 function base64url_random(int $bytes = 24): string
