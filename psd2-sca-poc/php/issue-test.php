@@ -9,8 +9,9 @@ require __DIR__ . '/vendor/autoload.php';
 
 $name = $_GET['name'] ?? 'Ricardo Silva';
 $lusopayId = $_GET['id'] ?? '76';
+$email = $_GET['email'] ?? 'ricardo.silva@lusopay.com';
 
-$preAuthCode = create_issuance_session(['name' => $name, 'lusopay_id' => $lusopayId]);
+$preAuthCode = create_issuance_session(['name' => $name, 'lusopay_id' => $lusopayId, 'email' => $email]);
 
 $credentialOffer = [
     'credential_issuer' => LUSOPAY_ISSUER_URL,
@@ -47,7 +48,7 @@ $qrCodeDataUrl = qr_code_data_uri($offerUri);
 <body>
   <div class="card">
     <h1>💳 Emitir LusoPay Card</h1>
-    <p>Nome: <strong><?= escape_html($name) ?></strong> · ID: <strong><?= escape_html($lusopayId) ?></strong></p>
+    <p>Nome: <strong><?= escape_html($name) ?></strong> · ID: <strong><?= escape_html($lusopayId) ?></strong> · Email: <strong><?= escape_html($email) ?></strong></p>
 
     <a class="btn-open" href="<?= escape_html($offerUri) ?>">📱 Adicionar à Carteira Digital</a>
     <img src="<?= $qrCodeDataUrl ?>" alt="QR" />
@@ -58,6 +59,8 @@ $qrCodeDataUrl = qr_code_data_uri($offerUri);
       <input type="text" id="name" name="name" value="<?= escape_html($name) ?>" />
       <label for="id">LusoPay ID</label>
       <input type="text" id="id" name="id" value="<?= escape_html($lusopayId) ?>" />
+      <label for="email">Email</label>
+      <input type="text" id="email" name="email" value="<?= escape_html($email) ?>" />
       <button type="submit">Gerar nova oferta</button>
     </form>
   </div>

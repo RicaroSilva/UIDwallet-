@@ -2,9 +2,9 @@
 // oidc/wallet-callback.php
 // The wallet's OpenID4VP direct_post lands here for the login flow (as
 // opposed to api/pay-with-card-response.php, which is the same idea for
-// the standalone "pay with card" flow). Parses out name + lusopay_id,
-// verifies the issuer signature, and -- if valid -- issues an OAuth2
-// authorization code and marks the oidc/authorize.php session READY.
+// the standalone "pay with card" flow). Parses out name + lusopay_id +
+// email, verifies the issuer signature, and -- if valid -- issues an
+// OAuth2 authorization code and marks the oidc/authorize.php session READY.
 
 declare(strict_types=1);
 require __DIR__ . '/../vendor/autoload.php';
@@ -46,6 +46,7 @@ if ($signatureValid && isset($parsed['claims']['name'], $parsed['claims']['lusop
     complete_oidc_session($oidcSession, [
         'name' => $parsed['claims']['name'],
         'lusopay_id' => $parsed['claims']['lusopay_id'],
+        'email' => $parsed['claims']['email'] ?? null,
     ]);
 }
 

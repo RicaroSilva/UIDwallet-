@@ -639,6 +639,14 @@ function build_oidc_id_token(array $claims, ?string $nonce): string
         'name' => $claims['name'],
         'lusopay_id' => $claims['lusopay_id'],
     ];
+    if (!empty($claims['email'])) {
+        // Vouched for by us, the credential's issuer -- not independently
+        // re-verified at presentation time, but Cyclos needs a non-empty
+        // email to link/create the account, per its own generic OIDC
+        // provider's account-matching logic.
+        $payload['email'] = $claims['email'];
+        $payload['email_verified'] = true;
+    }
     if ($nonce !== null && $nonce !== '') {
         $payload['nonce'] = $nonce;
     }

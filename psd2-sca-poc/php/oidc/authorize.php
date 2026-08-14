@@ -53,6 +53,7 @@ $dcqlQuery = [
             'claims' => [
                 ['path' => ['name'], 'id' => 'name'],
                 ['path' => ['lusopay_id'], 'id' => 'lusopay_id'],
+                ['path' => ['email'], 'id' => 'email'],
             ],
         ],
     ],
@@ -96,26 +97,18 @@ $qrCodeDataUrl = qr_code_data_uri($authorizationRequestUri);
 <title>LusoPay - Login com a Carteira Digital</title>
 <style>
   * { box-sizing: border-box; }
-  body { margin: 0; min-height: 100vh; display: flex; align-items: center; justify-content: center; background: #f2f4f7; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; color: #1c2333; }
-  .card { width: 100%; max-width: 420px; background: #fff; border-radius: 16px; box-shadow: 0 8px 24px rgba(20,30,60,0.08); padding: 28px; text-align: center; }
-  img { width: 220px; height: 220px; border-radius: 12px; border: 1px solid #eef0f3; }
-  .btn-open { display: block; background: #6d28d9; color: #fff; font-weight: 700; padding: 14px; border-radius: 10px; text-decoration: none; margin: 16px 0; }
-  .hint { font-size: 0.8rem; color: #6b7280; margin-top: 12px; word-break: break-all; }
-  .status { padding: 12px; border-radius: 10px; margin-top: 14px; font-size: 0.85rem; }
-  .status.pending { background: #fef9c3; color: #854d0e; }
+  body { margin: 0; min-height: 100vh; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 16px; background: #fff; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; color: #1c2333; }
+  p { margin: 0; font-size: 0.95rem; }
+  img { width: 240px; height: 240px; }
+  a { font-size: 0.8rem; color: #6b7280; text-decoration: underline; }
+  #statusBox { font-size: 0.8rem; color: #6b7280; }
 </style>
 </head>
 <body>
-  <div class="card">
-    <h1>🔐 Entrar com o LusoPay Card</h1>
-    <p>Digitaliza o código ou toca no botão para provares quem és com a tua Carteira Digital.</p>
-
-    <a class="btn-open" href="<?= escape_html($authorizationRequestUri) ?>">📱 Abrir na Carteira Digital (toca aqui no telemóvel)</a>
-    <img src="<?= $qrCodeDataUrl ?>" alt="QR" />
-    <p class="hint">Ou digitaliza este QR de outro dispositivo.</p>
-
-    <div class="status pending" id="statusBox">⏳ A aguardar confirmação na wallet...</div>
-  </div>
+  <p>Lê o código com a tua Carteira Digital</p>
+  <img src="<?= $qrCodeDataUrl ?>" alt="QR" />
+  <a href="<?= escape_html($authorizationRequestUri) ?>">abrir na Carteira Digital neste telemóvel</a>
+  <p id="statusBox">a aguardar confirmação...</p>
 
 <script>
   const STATUS_URL = <?= json_encode($statusUri) ?>
@@ -125,7 +118,7 @@ $qrCodeDataUrl = qr_code_data_uri($authorizationRequestUri);
       const response = await fetch(STATUS_URL)
       const data = await response.json()
       if (data.status === 'READY' && data.redirect_url) {
-        document.getElementById('statusBox').textContent = '✅ Confirmado, a voltar para o Cyclos...'
+        document.getElementById('statusBox').textContent = 'confirmado, a voltar...'
         window.location.href = data.redirect_url
         return
       }
