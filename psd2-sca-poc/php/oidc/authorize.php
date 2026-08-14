@@ -8,6 +8,13 @@
 // oidc/status.php and then redirects back to Cyclos with the code).
 
 declare(strict_types=1);
+
+// TEMPORARY while diagnosing the 500 on the real server -- shows the exact
+// PHP error instead of a bare 500. Remove once this endpoint is confirmed
+// working (same technique already used in api/request-object.php).
+ini_set('display_errors', '1');
+error_reporting(E_ALL);
+
 require __DIR__ . '/../vendor/autoload.php';
 
 function base64url_random(int $bytes = 24): string

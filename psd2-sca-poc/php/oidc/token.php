@@ -22,7 +22,7 @@ $clientSecret = $body['client_secret'] ?? null;
 $authHeader = $_SERVER['HTTP_AUTHORIZATION'] ?? '';
 if ($clientId === null && preg_match('/^Basic\s+(.+)$/i', $authHeader, $matches)) {
     $decoded = base64_decode($matches[1], true);
-    if ($decoded !== false && str_contains($decoded, ':')) {
+    if ($decoded !== false && strpos($decoded, ':') !== false) {
         [$clientId, $clientSecret] = explode(':', $decoded, 2);
     }
 }

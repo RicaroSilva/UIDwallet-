@@ -24,7 +24,7 @@ if ($session['status'] !== 'READY') {
 }
 
 $redirectUrl = $session['redirect_uri']
-    . (str_contains($session['redirect_uri'], '?') ? '&' : '?')
+    . (strpos($session['redirect_uri'], '?') !== false ? '&' : '?')
     . 'code=' . rawurlencode($session['code'])
     . '&state=' . rawurlencode($session['state']);
 
