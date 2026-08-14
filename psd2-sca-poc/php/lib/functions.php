@@ -447,3 +447,77 @@ function build_sd_jwt_vc(string $vct, array $disclosableClaims, array $holderJwk
 
     return $jws . '~' . implode('~', $disclosures) . '~';
 }
+
+// --- Presentation of the LusoPay Card (OpenID4VP) ---------------------
+// The mirror image of build_sd_jwt_vc() above: given the compact
+// presentation string a wallet posts back for a "LusoPay Card" request
+// (issuer-signed JWT + disclosures + an optional Key Binding JWT, per the
+// SD-JWT spec's "~"-joined compact serialization), pull out the
+// disclosed claims (name, lusopay_id) so a caller can act on them.
+
+const PRESENTATION_STORE_DIR = __DIR__ . '/../presentation-store';
+
+/**
+ * Splits a compact SD-JWT VC presentation into its issuer-signed JWT,
+ * disclosed claims, and (if present) Key Binding JWT. The Key Binding JWT
+ * -- proof the presenter holds the credential's bound key -- is only
+ * distinguished from a disclosure by shape: it's the trailing segment and,
+ * unlike a disclosure (a base64url-encoded JSON array), is itself a
+ * compact JWT (three "."-separated parts).
+ */
+function parse_sd_jwt_vc_presentation(string $presentation): array
+{
+    $segments = explode('~', $presentation);
+    $issuerJwt = array_shift($segments);
+
+    $kbJwt = null;
+    $last = end($segments);
+    if ($last !== false && $last !== '' && count(explode('.', $last)) === 3) {
+        $kbJwt = array_pop($segments);
+    }
+
+    $claims = [];
+    foreach ($segments as $disclosureB64) {
+        if ($disclosureB64 === '') {
+            continue;
+        }
+        $decoded = json_decode(base64url_decode($disclosureB64), true);
+        if (is_array($decoded) && count($decoded) === 3) {
+            [, $name, $value] = $decoded;
+            $claims[$name] = $value;
+        }
+    }
+
+    [$headerB64, $payloadB64] = explode('.', $issuerJwt);
+
+    return [
+        'issuer_jwt' => $issuerJwt,
+        'kb_jwt' => $kbJwt,
+        'header' => json_decode(base64url_decode($headerB64), true),
+        'payload' => json_decode(base64url_decode($payloadB64), true),
+        'claims' => $claims,
+    ];
+}
+
+function presentation_store_path(string $session): string
+{
+    if (!is_dir(PRESENTATION_STORE_DIR)) {
+        mkdir(PRESENTATION_STORE_DIR, 0700, true);
+    }
+    // $session is always our own generated random token -- safe as a filename.
+    return PRESENTATION_STORE_DIR . '/' . $session . '.json';
+}
+
+function save_card_presentation(string $session, array $result): void
+{
+    file_put_contents(presentation_store_path($session), json_encode($result));
+}
+
+function get_card_presentation(string $session): ?array
+{
+    $path = presentation_store_path($session);
+    if (!is_file($path)) {
+        return null;
+    }
+    return json_decode(file_get_contents($path), true);
+}
