@@ -391,6 +391,20 @@ function verify_es256_jwt(string $jwt, array $jwk): bool
 }
 
 /**
+ * did:jwk is self-certifying -- the DID is just the base64url-encoded JWK
+ * itself, so any resolver can decode it locally with no network lookup.
+ * Used as the SD-JWT VC header's "kid": the wallet library that verifies
+ * these credentials only accepts "did" or "x5c" as a signing-key trust
+ * anchor, not a bare "jwk" header (checked directly against its error:
+ * "Unsupported signing method for SD-JWT VC. Only did and x5c are
+ * supported at the moment").
+ */
+function issuer_did_jwk(array $jwk): string
+{
+    return 'did:jwk:' . base64url_encode(json_encode($jwk, JSON_UNESCAPED_SLASHES)) . '#0';
+}
+
+/**
  * Builds a signed SD-JWT VC (issuer-signed JWT + selectively disclosable
  * claims), bound to the holder's key via "cnf.jwk" so a later presentation
  * of this credential must be accompanied by a Key Binding JWT proving
@@ -419,7 +433,7 @@ function build_sd_jwt_vc(string $vct, array $disclosableClaims, array $holderJwk
     ];
 
     $signingKey = get_signing_key();
-    $header = ['alg' => 'ES256', 'typ' => 'dc+sd-jwt'];
+    $header = ['alg' => 'ES256', 'typ' => 'dc+sd-jwt', 'kid' => issuer_did_jwk($signingKey['jwk'])];
     $signingInput = base64url_encode(json_encode($header, JSON_UNESCAPED_SLASHES))
         . '.' . base64url_encode(json_encode($payload, JSON_UNESCAPED_SLASHES));
 
