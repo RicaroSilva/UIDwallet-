@@ -393,15 +393,18 @@ function verify_es256_jwt(string $jwt, array $jwk): bool
 /**
  * did:jwk is self-certifying -- the DID is just the base64url-encoded JWK
  * itself, so any resolver can decode it locally with no network lookup.
- * Used as the SD-JWT VC header's "kid": the wallet library that verifies
- * these credentials only accepts "did" or "x5c" as a signing-key trust
- * anchor, not a bare "jwk" header (checked directly against its error:
- * "Unsupported signing method for SD-JWT VC. Only did and x5c are
- * supported at the moment").
+ *
+ * The wallet's SD-JWT VC verifier picks its trust method from the
+ * payload's "iss" claim, not from the header's "kid" -- putting a
+ * did:jwk only in "kid" (with "iss" left as an https URL) still failed
+ * with "Unsupported signing method for SD-JWT VC. Only did and x5c are
+ * supported at the moment.", confirmed by trying exactly that. So "iss"
+ * itself must be the did:jwk; "kid" is that same DID plus a "#0" key
+ * fragment.
  */
 function issuer_did_jwk(array $jwk): string
 {
-    return 'did:jwk:' . base64url_encode(json_encode($jwk, JSON_UNESCAPED_SLASHES)) . '#0';
+    return 'did:jwk:' . base64url_encode(json_encode($jwk, JSON_UNESCAPED_SLASHES));
 }
 
 /**
@@ -421,9 +424,12 @@ function build_sd_jwt_vc(string $vct, array $disclosableClaims, array $holderJwk
         $sdHashes[] = base64url_encode(hash('sha256', $disclosureB64, true));
     }
 
+    $signingKey = get_signing_key();
+    $issuerDid = issuer_did_jwk($signingKey['jwk']);
+
     $now = time();
     $payload = [
-        'iss' => LUSOPAY_ISSUER_URL,
+        'iss' => $issuerDid,
         'vct' => $vct,
         'iat' => $now,
         'exp' => $now + 31536000,
@@ -432,8 +438,7 @@ function build_sd_jwt_vc(string $vct, array $disclosableClaims, array $holderJwk
         '_sd_alg' => 'sha-256',
     ];
 
-    $signingKey = get_signing_key();
-    $header = ['alg' => 'ES256', 'typ' => 'dc+sd-jwt', 'kid' => issuer_did_jwk($signingKey['jwk'])];
+    $header = ['alg' => 'ES256', 'typ' => 'dc+sd-jwt', 'kid' => $issuerDid . '#0'];
     $signingInput = base64url_encode(json_encode($header, JSON_UNESCAPED_SLASHES))
         . '.' . base64url_encode(json_encode($payload, JSON_UNESCAPED_SLASHES));
 
