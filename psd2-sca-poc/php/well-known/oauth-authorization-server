@@ -1,0 +1,6 @@
+{
+  "issuer": "https://pay.lusopay.com",
+  "token_endpoint": "https://pay.lusopay.com/uidwallettest/api/token.php",
+  "pre-authorized_grant_anonymous_access_supported": true,
+  "grant_types_supported": ["urn:ietf:params:oauth:grant-type:pre-authorized_code"]
+}

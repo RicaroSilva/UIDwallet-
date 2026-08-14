@@ -250,3 +250,181 @@ function qr_code_data_uri(string $payload): string
     $writer = new \Endroid\QrCode\Writer\PngWriter();
     return $writer->write($qrCode)->getDataUri();
 }
+
+// --- Issuance (OpenID4VCI) -------------------------------------------
+// The mirror image of the checkout flow above: instead of asking a wallet
+// to present an existing credential, this issues a brand new one (a
+// "LusoPay Card" carrying a name + lusopay_id) as a real SD-JWT VC, using
+// the pre-authorized_code flow (no separate login/PIN step).
+//
+// The issuer identity (LUSOPAY_ISSUER_URL) is deliberately the bare domain
+// root, not a subpath: OpenID4VCI requires the issuer metadata to be
+// served at /.well-known/openid-credential-issuer, inserted BEFORE any
+// path segment of the issuer URL. Keeping the issuer at the root avoids
+// needing an IIS rewrite rule for that insertion.
+
+const LUSOPAY_ISSUER_URL = 'https://pay.lusopay.com';
+const LUSOPAY_CREDENTIAL_VCT = 'urn:lusopay:card:1';
+const ISSUANCE_STORE_DIR = __DIR__ . '/../issuance-store';
+
+function base64url_decode(string $data): string
+{
+    $remainder = strlen($data) % 4;
+    if ($remainder !== 0) {
+        $data .= str_repeat('=', 4 - $remainder);
+    }
+    return base64_decode(strtr($data, '-_', '+/'));
+}
+
+function issuance_store_path(string $key): string
+{
+    if (!is_dir(ISSUANCE_STORE_DIR)) {
+        mkdir(ISSUANCE_STORE_DIR, 0700, true);
+    }
+    // $key is always our own generated random token/code -- safe as a filename.
+    return ISSUANCE_STORE_DIR . '/' . $key . '.json';
+}
+
+/**
+ * Starts a new issuance session for the given claims and returns the
+ * pre-authorized_code to embed in the credential offer.
+ */
+function create_issuance_session(array $claims): string
+{
+    $code = bin2hex(random_bytes(16));
+    file_put_contents(issuance_store_path("code-{$code}"), json_encode(['claims' => $claims]));
+    return $code;
+}
+
+/**
+ * Exchanges a pre-authorized_code for an access_token + c_nonce, per the
+ * OpenID4VCI pre-authorized_code token grant. Single-use: the code is
+ * consumed and replaced by a token-keyed session.
+ */
+function exchange_pre_authorized_code(string $code): ?array
+{
+    $path = issuance_store_path("code-{$code}");
+    if (!is_file($path)) {
+        return null;
+    }
+    $session = json_decode(file_get_contents($path), true);
+    unlink($path);
+
+    $accessToken = bin2hex(random_bytes(24));
+    $cNonce = bin2hex(random_bytes(16));
+    file_put_contents(issuance_store_path("token-{$accessToken}"), json_encode([
+        'claims' => $session['claims'],
+        'c_nonce' => $cNonce,
+    ]));
+
+    return ['access_token' => $accessToken, 'c_nonce' => $cNonce];
+}
+
+function get_issuance_session_by_access_token(string $accessToken): ?array
+{
+    $path = issuance_store_path("token-{$accessToken}");
+    if (!is_file($path)) {
+        return null;
+    }
+    return json_decode(file_get_contents($path), true);
+}
+
+function consume_issuance_session(string $accessToken): void
+{
+    @unlink(issuance_store_path("token-{$accessToken}"));
+}
+
+/**
+ * Converts a P-256 JWK (x, y coordinates) into a PEM public key, by
+ * prefixing the raw EC point with the fixed DER header for a P-256
+ * SubjectPublicKeyInfo structure. PHP has no direct "import raw EC point"
+ * API, so this is the standard workaround.
+ */
+function jwk_to_pem(array $jwk): string
+{
+    $x = base64url_decode($jwk['x']);
+    $y = base64url_decode($jwk['y']);
+    $derPrefix = hex2bin('3059301306072a8648ce3d020106082a8648ce3d030107034200');
+    $der = $derPrefix . "\x04" . $x . $y;
+    return "-----BEGIN PUBLIC KEY-----\n" . chunk_split(base64_encode($der), 64, "\n") . "-----END PUBLIC KEY-----\n";
+}
+
+function jose_ecdsa_signature_to_der(string $jose, int $componentLength = 32): string
+{
+    $encodeInteger = function (string $bytes): string {
+        $bytes = ltrim($bytes, "\x00");
+        if ($bytes === '' || (ord($bytes[0]) & 0x80)) {
+            $bytes = "\x00" . $bytes;
+        }
+        return "\x02" . chr(strlen($bytes)) . $bytes;
+    };
+
+    $rEnc = $encodeInteger(substr($jose, 0, $componentLength));
+    $sEnc = $encodeInteger(substr($jose, $componentLength, $componentLength));
+    $seqBody = $rEnc . $sEnc;
+
+    return "\x30" . chr(strlen($seqBody)) . $seqBody;
+}
+
+/**
+ * Verifies a compact JWT's ES256 signature against a P-256 JWK, e.g. to
+ * check a wallet's key-possession "proof" JWT is genuinely signed by the
+ * key it claims (embedded in its own header as "jwk").
+ */
+function verify_es256_jwt(string $jwt, array $jwk): bool
+{
+    $parts = explode('.', $jwt);
+    if (count($parts) !== 3) {
+        return false;
+    }
+    [$headerB64, $payloadB64, $sigB64] = $parts;
+
+    $publicKey = openssl_pkey_get_public(jwk_to_pem($jwk));
+    if ($publicKey === false) {
+        return false;
+    }
+
+    $signingInput = "{$headerB64}.{$payloadB64}";
+    $derSignature = jose_ecdsa_signature_to_der(base64url_decode($sigB64));
+
+    return openssl_verify($signingInput, $derSignature, $publicKey, OPENSSL_ALGO_SHA256) === 1;
+}
+
+/**
+ * Builds a signed SD-JWT VC (issuer-signed JWT + selectively disclosable
+ * claims), bound to the holder's key via "cnf.jwk" so a later presentation
+ * of this credential must be accompanied by a Key Binding JWT proving
+ * possession of that same key.
+ */
+function build_sd_jwt_vc(string $vct, array $disclosableClaims, array $holderJwk): string
+{
+    $disclosures = [];
+    $sdHashes = [];
+    foreach ($disclosableClaims as $name => $value) {
+        $salt = base64url_encode(random_bytes(16));
+        $disclosureB64 = base64url_encode(json_encode([$salt, $name, $value], JSON_UNESCAPED_SLASHES));
+        $disclosures[] = $disclosureB64;
+        $sdHashes[] = base64url_encode(hash('sha256', $disclosureB64, true));
+    }
+
+    $now = time();
+    $payload = [
+        'iss' => LUSOPAY_ISSUER_URL,
+        'vct' => $vct,
+        'iat' => $now,
+        'exp' => $now + 31536000,
+        'cnf' => ['jwk' => $holderJwk],
+        '_sd' => $sdHashes,
+        '_sd_alg' => 'sha-256',
+    ];
+
+    $signingKey = get_signing_key();
+    $header = ['alg' => 'ES256', 'typ' => 'dc+sd-jwt'];
+    $signingInput = base64url_encode(json_encode($header, JSON_UNESCAPED_SLASHES))
+        . '.' . base64url_encode(json_encode($payload, JSON_UNESCAPED_SLASHES));
+
+    openssl_sign($signingInput, $derSignature, $signingKey['private_key'], OPENSSL_ALGO_SHA256);
+    $jws = $signingInput . '.' . base64url_encode(der_ecdsa_signature_to_jose($derSignature));
+
+    return $jws . '~' . implode('~', $disclosures) . '~';
+}
