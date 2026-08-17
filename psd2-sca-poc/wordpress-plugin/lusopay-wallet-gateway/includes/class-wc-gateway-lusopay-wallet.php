@@ -93,7 +93,14 @@ class WC_Gateway_LusoPay_Wallet extends WC_Payment_Gateway
             return ['result' => 'failure'];
         }
 
-        $order->update_status('on-hold', 'A aguardar confirmação via LusoPay Wallet.');
+        // Deliberately NOT changing the order status here: WooCommerce's
+        // "Pay for order" page only shows the payment (our QR receipt)
+        // for orders still needing payment ($order->needs_payment(),
+        // true only for "pending"/"failed"). Moving to "on-hold" here
+        // made it show "não pode ser paga" instead of the QR --
+        // verify_payment_on_thankyou() sets the real final status
+        // ("failed" if the wallet rejects it, paid via payment_complete()
+        // if it doesn't) once the wallet has actually answered.
 
         // Stays on this site: WooCommerce's own "Pay for order" page,
         // where woocommerce_receipt_{id} (render_qr_receipt below) shows
