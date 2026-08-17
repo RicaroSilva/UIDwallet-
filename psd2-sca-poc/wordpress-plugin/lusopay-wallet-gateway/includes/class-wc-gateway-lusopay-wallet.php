@@ -27,11 +27,17 @@ class WC_Gateway_LusoPay_Wallet extends WC_Payment_Gateway
 
         $this->title = $this->get_option('title');
         $this->description = $this->get_option('description');
-        $this->checkout_url = $this->get_option('checkout_url');
-        $this->status_url = $this->get_option('status_url');
+        // WooCommerce only applies a form field's "default" the very first
+        // time the settings are saved -- once the option exists (even from
+        // before a field existed, or saved blank), get_option() returns
+        // exactly what's stored, blank or not, and never falls back to the
+        // default again. Fall back to it ourselves for the URL fields so a
+        // blank saved value can't silently break the checkout/connect flow.
+        $this->checkout_url = $this->get_option('checkout_url') ?: $this->form_fields['checkout_url']['default'];
+        $this->status_url = $this->get_option('status_url') ?: $this->form_fields['status_url']['default'];
         $this->public_id = $this->get_option('public_id');
-        $this->connect_url = $this->get_option('connect_url');
-        $this->connect_result_url = $this->get_option('connect_result_url');
+        $this->connect_url = $this->get_option('connect_url') ?: $this->form_fields['connect_url']['default'];
+        $this->connect_result_url = $this->get_option('connect_result_url') ?: $this->form_fields['connect_result_url']['default'];
 
         add_action('woocommerce_update_options_payment_gateways_' . $this->id, [$this, 'process_admin_options']);
         add_action('woocommerce_thankyou_' . $this->id, [$this, 'verify_payment_on_thankyou']);
