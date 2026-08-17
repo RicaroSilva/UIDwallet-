@@ -1,11 +1,14 @@
 <?php
 // class-wc-gateway-lusopay-wallet.php
-// WooCommerce payment gateway that redirects the buyer to LusoPay's
-// hosted checkout.php (which asks the EUDI wallet to present the LusoPay
-// Card and calls Cyclos to move the money), then re-verifies the outcome
-// server-to-server on the order-received page before marking it paid --
-// the redirect's own "status=" query param is never trusted on its own,
-// since it's attacker-controlled in the browser.
+// WooCommerce payment gateway backed by LusoPay's hosted checkout.php
+// (which asks the EUDI wallet to present the LusoPay Card and calls
+// Cyclos to move the money). Rather than sending the buyer off to that
+// page, render_qr_receipt() fetches it server-to-server on WooCommerce's
+// own "Pay for order" page and inlines its QR there, so the QR shows up
+// immediately, on this site, with no redirect. It then re-verifies the
+// outcome itself (server-to-server, via checkout-status.php) before
+// marking the order paid -- never trusting a browser-supplied "status="
+// query param on its own, since that's attacker-controlled.
 
 defined('ABSPATH') || exit;
 
@@ -30,6 +33,7 @@ class WC_Gateway_LusoPay_Wallet extends WC_Payment_Gateway
 
         add_action('woocommerce_update_options_payment_gateways_' . $this->id, [$this, 'process_admin_options']);
         add_action('woocommerce_thankyou_' . $this->id, [$this, 'verify_payment_on_thankyou']);
+        add_action('woocommerce_receipt_' . $this->id, [$this, 'render_qr_receipt']);
     }
 
     public function init_form_fields(): void
@@ -89,23 +93,99 @@ class WC_Gateway_LusoPay_Wallet extends WC_Payment_Gateway
             return ['result' => 'failure'];
         }
 
-        $returnUrl = add_query_arg('lusopay_order', $order_id, $this->get_return_url($order));
+        $order->update_status('on-hold', 'A aguardar confirmação via LusoPay Wallet.');
 
-        $params = [
+        // Stays on this site: WooCommerce's own "Pay for order" page,
+        // where woocommerce_receipt_{id} (render_qr_receipt below) shows
+        // the QR immediately instead of sending the buyer to checkout_url.
+        return [
+            'result' => 'success',
+            'redirect' => $order->get_checkout_payment_url(true),
+        ];
+    }
+
+    private function build_checkout_params(\WC_Order $order): array
+    {
+        return [
             'amount' => $order->get_total(),
             'currency' => $order->get_currency(),
             'description' => sprintf('Encomenda #%s', $order->get_order_number()),
             'merchant' => get_bloginfo('name'),
             'merchant_public_id' => $this->public_id,
-            'return_url' => $returnUrl,
+            'return_url' => add_query_arg('lusopay_order', $order->get_id(), $this->get_return_url($order)),
         ];
+    }
 
-        $order->update_status('on-hold', 'A aguardar confirmação via LusoPay Wallet.');
+    /**
+     * Fetches checkout.php server-to-server and inlines its QR + wallet
+     * link directly on this page, instead of sending the buyer there.
+     * Scrapes checkout.php's markup for the pieces we need -- fragile if
+     * that page's HTML changes, but avoids modifying it for this.
+     */
+    public function render_qr_receipt($order_id): void
+    {
+        $order = wc_get_order($order_id);
+        if (!$order) {
+            return;
+        }
 
-        return [
-            'result' => 'success',
-            'redirect' => $this->checkout_url . '?' . http_build_query($params),
-        ];
+        $checkoutPageUrl = $this->checkout_url . '?' . http_build_query($this->build_checkout_params($order));
+        $response = wp_remote_get($checkoutPageUrl, ['timeout' => 15]);
+
+        if (is_wp_error($response)) {
+            echo '<p>Não foi possível preparar o pagamento LusoPay Wallet: ' . esc_html($response->get_error_message()) . '</p>';
+            return;
+        }
+
+        $html = wp_remote_retrieve_body($response);
+        preg_match('/id="qrImage"\s+src="([^"]+)"/', $html, $qrMatch);
+        preg_match('/class="btn-open"\s+href="([^"]+)"/', $html, $linkMatch);
+        preg_match('/const SESSION = "([a-f0-9]+)"/', $html, $sessionMatch);
+
+        if (empty($qrMatch[1]) || empty($sessionMatch[1])) {
+            echo '<p>Não foi possível preparar o QR do LusoPay Wallet. Tenta novamente.</p>';
+            return;
+        }
+
+        $qrSrc = $qrMatch[1];
+        $walletLink = $linkMatch[1] ?? '';
+        $session = $sessionMatch[1];
+        $returnUrl = $this->get_return_url($order);
+        ?>
+        <div id="lusopay-wallet-receipt" style="max-width:320px;margin:24px auto;text-align:center;">
+            <p><?php echo esc_html($this->description ?: 'Digitaliza o código com a tua Carteira Digital LusoPay.'); ?></p>
+            <img src="<?php echo esc_attr($qrSrc); ?>" alt="QR" style="width:220px;height:220px;" />
+            <?php if ($walletLink !== ''): ?>
+                <p><a href="<?php echo esc_attr($walletLink); ?>">Abrir na Carteira Digital neste telemóvel</a></p>
+            <?php endif; ?>
+            <p id="lusopay-wallet-status">A aguardar confirmação...</p>
+        </div>
+        <script>
+        (function () {
+            var statusEl = document.getElementById('lusopay-wallet-status')
+            var ajaxUrl = <?php echo wp_json_encode(admin_url('admin-ajax.php')); ?>
+            var session = <?php echo wp_json_encode($session); ?>
+            var returnUrl = <?php echo wp_json_encode($returnUrl); ?>
+
+            function poll() {
+                fetch(ajaxUrl + '?action=lusopay_wallet_status&session=' + encodeURIComponent(session))
+                    .then(function (r) { return r.json() })
+                    .then(function (data) {
+                        if (data.status === 'AUTHORIZED' || data.status === 'REJECTED') {
+                            statusEl.textContent = data.status === 'AUTHORIZED' ? 'Pago, a voltar...' : 'Pagamento rejeitado.'
+                            var sep = returnUrl.indexOf('?') === -1 ? '?' : '&'
+                            window.location.href = returnUrl + sep + 'lusopay_session=' + encodeURIComponent(session)
+                            return
+                        }
+                        setTimeout(poll, 2000)
+                    })
+                    .catch(function () { setTimeout(poll, 2000) })
+            }
+
+            poll()
+        })()
+        </script>
+        <?php
     }
 
     /**
