@@ -2,7 +2,7 @@
 /**
  * Plugin Name: LusoPay Wallet Gateway
  * Description: Método de pagamento WooCommerce que identifica o cliente pela Carteira Digital LusoPay (EUDI Wallet) antes de autorizar o pagamento via Cyclos.
- * Version: 0.1.1
+ * Version: 0.1.2
  * Requires Plugins: woocommerce
  */
 
@@ -64,6 +64,42 @@ function lusopay_wallet_connect_status(): void
     }
 
     $response = wp_remote_get(add_query_arg(['session' => $session, 'format' => 'json'], $resultUrl), ['timeout' => 10]);
+    if (is_wp_error($response)) {
+        wp_send_json(['status' => 'PENDING']);
+    }
+
+    $data = json_decode(wp_remote_retrieve_body($response), true);
+    wp_send_json($data ?: ['status' => 'PENDING']);
+}
+
+// Polled by the Blocks checkout payment method
+// (assets/js/lusopay-wallet-blocks.js) while its onPaymentSetup()
+// callback holds the actual WooCommerce order back, waiting to see
+// whether the wallet authorized the payment. Public/nopriv because
+// checkout is open to guests -- it only ever proxies a read of one
+// session's status (same pattern as lusopay_wallet_connect_status
+// above), nothing sensitive.
+add_action('wp_ajax_lusopay_wallet_checkout_status', 'lusopay_wallet_checkout_status');
+add_action('wp_ajax_nopriv_lusopay_wallet_checkout_status', 'lusopay_wallet_checkout_status');
+
+function lusopay_wallet_checkout_status(): void
+{
+    if (!check_ajax_referer('lusopay_wallet_checkout', 'nonce', false)) {
+        wp_send_json(['status' => 'ERROR'], 403);
+    }
+
+    $session = isset($_GET['session']) ? sanitize_text_field(wp_unslash($_GET['session'])) : '';
+    if ($session === '' || !preg_match('/^[A-Za-z0-9_-]{8,64}$/', $session)) {
+        wp_send_json(['status' => 'PENDING']);
+    }
+
+    $settings = get_option('woocommerce_lusopay_wallet_settings', []);
+    $statusUrl = $settings['status_url'] ?? '';
+    if ($statusUrl === '') {
+        wp_send_json(['status' => 'PENDING']);
+    }
+
+    $response = wp_remote_get(add_query_arg('session', $session, $statusUrl), ['timeout' => 10]);
     if (is_wp_error($response)) {
         wp_send_json(['status' => 'PENDING']);
     }

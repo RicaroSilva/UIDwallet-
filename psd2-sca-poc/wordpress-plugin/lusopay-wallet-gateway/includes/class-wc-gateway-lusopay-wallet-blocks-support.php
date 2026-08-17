@@ -33,7 +33,7 @@ final class WC_Gateway_LusoPay_Wallet_Blocks_Support extends AbstractPaymentMeth
             'wc-lusopay-wallet-blocks',
             plugins_url('assets/js/lusopay-wallet-blocks.js', $pluginRoot . '/lusopay-wallet-gateway.php'),
             ['wc-blocks-registry', 'wc-settings', 'wp-element', 'wp-i18n'],
-            '0.1.0',
+            '0.1.2',
             true
         );
         return ['wc-lusopay-wallet-blocks'];
@@ -44,6 +44,15 @@ final class WC_Gateway_LusoPay_Wallet_Blocks_Support extends AbstractPaymentMeth
         return [
             'title' => $this->get_setting('title'),
             'description' => $this->get_setting('description'),
+            // The gateway's constructor already falls back to the form
+            // field's default when the saved option is blank -- read
+            // through it instead of get_option()/get_setting() directly
+            // so that fallback applies here too.
+            'checkoutUrl' => $this->gateway->checkout_url,
+            'merchantPublicId' => $this->gateway->public_id,
+            'merchant' => get_bloginfo('name'),
+            'ajaxUrl' => admin_url('admin-ajax.php'),
+            'nonce' => wp_create_nonce('lusopay_wallet_checkout'),
         ];
     }
 }

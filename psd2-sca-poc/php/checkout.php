@@ -40,6 +40,15 @@ if ($merchantPublicId === '') {
 }
 $amount = number_format((float) $amount, 2, '.', '');
 
+// Accepts an optional ?session= from the caller (e.g. the WooCommerce
+// Blocks payment method, which needs to know the session id up front so
+// it can poll for the outcome while holding the actual WooCommerce order
+// back) so it can know the session id up front, before the wallet
+// answers, instead of having to scrape it out of this page. Falls back
+// to a random one otherwise -- same pattern as pay-with-card.php.
+$requestedSession = $_GET['session'] ?? '';
+$presetSession = preg_match('/^[A-Za-z0-9_-]{8,64}$/', $requestedSession) ? $requestedSession : null;
+
 $session = create_checkout_session([
     'amount' => $amount,
     'currency' => $currency,
@@ -47,7 +56,7 @@ $session = create_checkout_session([
     'merchant' => $merchant,
     'return_url' => $returnUrl,
     'merchant_public_id' => $merchantPublicId,
-]);
+], $presetSession);
 
 $scheme = (($_SERVER['HTTPS'] ?? '') !== '') ? 'https' : 'http';
 $host = $_SERVER['HTTP_HOST'];

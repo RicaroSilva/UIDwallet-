@@ -708,9 +708,16 @@ function checkout_store_path(string $session): string
  * OpenID4VP request's response_uri so api/checkout-response.php can find
  * it again once the wallet answers.
  */
-function create_checkout_session(array $params): string
+function create_checkout_session(array $params, ?string $session = null): string
 {
-    $session = bin2hex(random_bytes(16));
+    // Callers that need to know the session id up front -- before the
+    // wallet has answered -- (e.g. the WooCommerce Blocks payment method,
+    // which polls for this session's status while the checkout order
+    // itself is still being held back) can pass their own, validated by
+    // the caller the same way pay-with-card.php validates its own.
+    if ($session === null) {
+        $session = bin2hex(random_bytes(16));
+    }
     file_put_contents(checkout_store_path($session), json_encode(['params' => $params, 'status' => 'PENDING']));
     return $session;
 }

@@ -221,18 +221,47 @@ class WC_Gateway_LusoPay_Wallet extends WC_Payment_Gateway
             return ['result' => 'failure'];
         }
 
-        // Deliberately NOT changing the order status here: WooCommerce's
-        // "Pay for order" page only shows the payment (our QR receipt)
-        // for orders still needing payment ($order->needs_payment(),
-        // true only for "pending"/"failed"). Moving to "on-hold" here
-        // made it show "não pode ser paga" instead of the QR --
-        // verify_payment_on_thankyou() sets the real final status
-        // ("failed" if the wallet rejects it, paid via payment_complete()
-        // if it doesn't) once the wallet has actually answered.
+        // The Blocks checkout payment method (assets/js/lusopay-wallet-blocks.js)
+        // already asked the wallet for payment *before* WooCommerce got
+        // this far -- its onPaymentSetup() callback only resolves as
+        // SUCCESS (letting the order actually get created/this method
+        // run at all) once checkout-status.php reported AUTHORIZED, and
+        // hands us the session id that proves it. Never trust that on the
+        // browser's own say-so, though -- verify server-to-server here,
+        // exactly like verify_payment_on_thankyou() does for the classic
+        // flow below.
+        $walletSession = isset($_POST['lusopay_wallet_session']) ? sanitize_text_field(wp_unslash($_POST['lusopay_wallet_session'])) : '';
+        if ($walletSession !== '') {
+            $response = wp_remote_get(add_query_arg('session', $walletSession, $this->status_url), ['timeout' => 10]);
+            if (!is_wp_error($response)) {
+                $data = json_decode(wp_remote_retrieve_body($response), true);
+                if (($data['status'] ?? null) === 'AUTHORIZED') {
+                    $order->payment_complete($data['transaction_id'] ?? '');
+                    $order->add_order_note('Pago via LusoPay Wallet (transação ' . ($data['transaction_id'] ?? '?') . ').');
+                    return [
+                        'result' => 'success',
+                        'redirect' => $this->get_return_url($order),
+                    ];
+                }
+            }
+            wc_add_notice('Não foi possível confirmar o pagamento LusoPay Wallet. Tenta novamente ou escolhe outro método de pagamento.', 'error');
+            return ['result' => 'failure'];
+        }
 
-        // Stays on this site: WooCommerce's own "Pay for order" page,
-        // where woocommerce_receipt_{id} (render_qr_receipt below) shows
-        // the QR immediately instead of sending the buyer to checkout_url.
+        // No wallet session yet -- the classic (shortcode) checkout has no
+        // equivalent to Blocks' onPaymentSetup() to hold the order back
+        // with, so it falls back to the older flow instead: create the
+        // order now and show the QR on WooCommerce's own "Pay for order"
+        // page (render_qr_receipt() below, via woocommerce_receipt_{id}).
+        //
+        // Deliberately NOT changing the order status here: that page only
+        // shows the payment (our QR receipt) for orders still needing
+        // payment ($order->needs_payment(), true only for
+        // "pending"/"failed"). Moving to "on-hold" here made it show
+        // "não pode ser paga" instead of the QR -- verify_payment_on_thankyou()
+        // sets the real final status ("failed" if the wallet rejects it,
+        // paid via payment_complete() if it doesn't) once the wallet has
+        // actually answered.
         return [
             'result' => 'success',
             'redirect' => $order->get_checkout_payment_url(true),
