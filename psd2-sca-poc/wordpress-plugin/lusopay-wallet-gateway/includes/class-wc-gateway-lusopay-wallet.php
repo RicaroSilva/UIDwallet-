@@ -124,10 +124,12 @@ class WC_Gateway_LusoPay_Wallet extends WC_Payment_Gateway
     }
 
     /**
-     * Fetches checkout.php server-to-server and inlines its QR + wallet
-     * link directly on this page, instead of sending the buyer there.
-     * Scrapes checkout.php's markup for the pieces we need -- fragile if
-     * that page's HTML changes, but avoids modifying it for this.
+     * Opens checkout_url in a popup (PayPal-style) instead of embedding
+     * it -- no server-to-server fetch/scraping needed, checkout.php's own
+     * existing QR + polling + auto-redirect-to-return_url just runs
+     * as-is inside that window. When it reaches return_url it's landed on
+     * this same WordPress site, so window.opener works from there to
+     * bring the original tab along (see verify_payment_on_thankyou()).
      */
     public function render_qr_receipt($order_id): void
     {
@@ -137,59 +139,24 @@ class WC_Gateway_LusoPay_Wallet extends WC_Payment_Gateway
         }
 
         $checkoutPageUrl = $this->checkout_url . '?' . http_build_query($this->build_checkout_params($order));
-        $response = wp_remote_get($checkoutPageUrl, ['timeout' => 15]);
-
-        if (is_wp_error($response)) {
-            echo '<p>Não foi possível preparar o pagamento LusoPay Wallet: ' . esc_html($response->get_error_message()) . '</p>';
-            return;
-        }
-
-        $html = wp_remote_retrieve_body($response);
-        preg_match('/id="qrImage"\s+src="([^"]+)"/', $html, $qrMatch);
-        preg_match('/class="btn-open"\s+href="([^"]+)"/', $html, $linkMatch);
-        preg_match('/const SESSION = "([a-f0-9]+)"/', $html, $sessionMatch);
-
-        if (empty($qrMatch[1]) || empty($sessionMatch[1])) {
-            echo '<p>Não foi possível preparar o QR do LusoPay Wallet. Tenta novamente.</p>';
-            return;
-        }
-
-        $qrSrc = $qrMatch[1];
-        $walletLink = $linkMatch[1] ?? '';
-        $session = $sessionMatch[1];
-        $returnUrl = $this->get_return_url($order);
         ?>
-        <div id="lusopay-wallet-receipt" style="max-width:320px;margin:24px auto;text-align:center;">
-            <p><?php echo esc_html($this->description ?: 'Digitaliza o código com a tua Carteira Digital LusoPay.'); ?></p>
-            <img src="<?php echo esc_attr($qrSrc); ?>" alt="QR" style="width:220px;height:220px;" />
-            <?php if ($walletLink !== ''): ?>
-                <p><a href="<?php echo esc_attr($walletLink); ?>">Abrir na Carteira Digital neste telemóvel</a></p>
-            <?php endif; ?>
-            <p id="lusopay-wallet-status">A aguardar confirmação...</p>
+        <div id="lusopay-wallet-popup-wrap" style="max-width:320px;margin:24px auto;text-align:center;">
+            <p>A abrir o pagamento numa nova janela...</p>
+            <p><a href="<?php echo esc_url($checkoutPageUrl); ?>" target="_blank">Clica aqui se a janela não abriu</a></p>
         </div>
         <script>
         (function () {
-            var statusEl = document.getElementById('lusopay-wallet-status')
-            var ajaxUrl = <?php echo wp_json_encode(admin_url('admin-ajax.php')); ?>
-            var session = <?php echo wp_json_encode($session); ?>
-            var returnUrl = <?php echo wp_json_encode($returnUrl); ?>
-
-            function poll() {
-                fetch(ajaxUrl + '?action=lusopay_wallet_status&session=' + encodeURIComponent(session))
-                    .then(function (r) { return r.json() })
-                    .then(function (data) {
-                        if (data.status === 'AUTHORIZED' || data.status === 'REJECTED') {
-                            statusEl.textContent = data.status === 'AUTHORIZED' ? 'Pago, a voltar...' : 'Pagamento rejeitado.'
-                            var sep = returnUrl.indexOf('?') === -1 ? '?' : '&'
-                            window.location.href = returnUrl + sep + 'lusopay_session=' + encodeURIComponent(session)
-                            return
-                        }
-                        setTimeout(poll, 2000)
-                    })
-                    .catch(function () { setTimeout(poll, 2000) })
+            var url = <?php echo wp_json_encode($checkoutPageUrl); ?>
+            var popup = window.open(url, 'lusopay_wallet_popup', 'width=440,height=760')
+            if (!popup) {
+                return // blocked by the browser -- the fallback link above still works
             }
-
-            poll()
+            var interval = setInterval(function () {
+                if (popup.closed) {
+                    clearInterval(interval)
+                    window.location.reload()
+                }
+            }, 1000)
         })()
         </script>
         <?php
@@ -204,31 +171,39 @@ class WC_Gateway_LusoPay_Wallet extends WC_Payment_Gateway
     public function verify_payment_on_thankyou($order_id): void
     {
         $order = wc_get_order($order_id);
-        if (!$order || $order->is_paid()) {
+        if (!$order) {
             return;
         }
 
-        $session = isset($_GET['lusopay_session']) ? sanitize_text_field(wp_unslash($_GET['lusopay_session'])) : '';
-        if ($session === '') {
-            return;
+        if (!$order->is_paid()) {
+            $session = isset($_GET['lusopay_session']) ? sanitize_text_field(wp_unslash($_GET['lusopay_session'])) : '';
+            if ($session !== '') {
+                $response = wp_remote_get(add_query_arg('session', $session, $this->status_url), ['timeout' => 10]);
+                if (is_wp_error($response)) {
+                    $order->update_status('failed', 'Não foi possível confirmar o pagamento LusoPay Wallet: ' . $response->get_error_message());
+                } else {
+                    $data = json_decode(wp_remote_retrieve_body($response), true);
+                    $status = $data['status'] ?? null;
+                    if ($status === 'AUTHORIZED') {
+                        $order->payment_complete($data['transaction_id'] ?? '');
+                        $order->add_order_note('Pago via LusoPay Wallet (transação ' . ($data['transaction_id'] ?? '?') . ').');
+                    } elseif ($status === 'REJECTED') {
+                        $order->update_status('failed', 'Pagamento LusoPay Wallet rejeitado: ' . implode(', ', $data['errors'] ?? []));
+                    }
+                    // Any other status (still PENDING) is left alone --
+                    // the wallet hasn't answered checkout.php yet.
+                }
+            }
         }
-
-        $response = wp_remote_get(add_query_arg('session', $session, $this->status_url), ['timeout' => 10]);
-        if (is_wp_error($response)) {
-            $order->update_status('failed', 'Não foi possível confirmar o pagamento LusoPay Wallet: ' . $response->get_error_message());
-            return;
+        ?>
+        <script>
+        // Reached inside the payment popup render_qr_receipt() opened --
+        // bring the original tab to this same page and close the popup.
+        if (window.opener && !window.opener.closed) {
+            window.opener.location.href = window.location.href
+            window.close()
         }
-
-        $data = json_decode(wp_remote_retrieve_body($response), true);
-        $status = $data['status'] ?? null;
-
-        if ($status === 'AUTHORIZED') {
-            $order->payment_complete($data['transaction_id'] ?? '');
-            $order->add_order_note('Pago via LusoPay Wallet (transação ' . ($data['transaction_id'] ?? '?') . ').');
-        } elseif ($status === 'REJECTED') {
-            $order->update_status('failed', 'Pagamento LusoPay Wallet rejeitado: ' . implode(', ', $data['errors'] ?? []));
-        }
-        // Any other status (e.g. still PENDING) is left as "on-hold" --
-        // the buyer landed here before checkout.php actually resolved it.
+        </script>
+        <?php
     }
 }
