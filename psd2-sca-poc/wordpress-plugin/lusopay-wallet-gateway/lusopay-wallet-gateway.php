@@ -2,7 +2,7 @@
 /**
  * Plugin Name: LusoPay Wallet Gateway
  * Description: Método de pagamento WooCommerce que identifica o cliente pela Carteira Digital LusoPay (EUDI Wallet) antes de autorizar o pagamento via Cyclos.
- * Version: 0.1.0
+ * Version: 0.1.1
  * Requires Plugins: woocommerce
  */
 
