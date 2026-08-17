@@ -2,13 +2,13 @@
 // class-wc-gateway-lusopay-wallet.php
 // WooCommerce payment gateway backed by LusoPay's hosted checkout.php
 // (which asks the EUDI wallet to present the LusoPay Card and calls
-// Cyclos to move the money). Rather than sending the buyer off to that
-// page, render_qr_receipt() fetches it server-to-server on WooCommerce's
-// own "Pay for order" page and inlines its QR there, so the QR shows up
-// immediately, on this site, with no redirect. It then re-verifies the
-// outcome itself (server-to-server, via checkout-status.php) before
-// marking the order paid -- never trusting a browser-supplied "status="
-// query param on its own, since that's attacker-controlled.
+// Cyclos to move the money). render_qr_receipt() opens checkout.php in a
+// popup (PayPal-style) as soon as WooCommerce's own "Pay for order" page
+// loads, and the buyer's own checkout/cart page is left alone until the
+// outcome is known. It re-verifies that outcome itself (server-to-server,
+// via checkout-status.php) before marking the order paid -- never
+// trusting a browser-supplied "status=" query param on its own, since
+// that's attacker-controlled.
 
 defined('ABSPATH') || exit;
 
@@ -124,12 +124,16 @@ class WC_Gateway_LusoPay_Wallet extends WC_Payment_Gateway
     }
 
     /**
-     * Opens checkout_url in a popup (PayPal-style) instead of embedding
-     * it -- no server-to-server fetch/scraping needed, checkout.php's own
-     * existing QR + polling + auto-redirect-to-return_url just runs
-     * as-is inside that window. When it reaches return_url it's landed on
-     * this same WordPress site, so window.opener works from there to
-     * bring the original tab along (see verify_payment_on_thankyou()).
+     * Opens checkout_url in a popup (PayPal-style) as soon as this page
+     * loads. checkout.php's own existing QR + polling + auto-redirect
+     * runs unmodified inside that window; once it reaches return_url it's
+     * on this same WordPress site, where verify_payment_on_thankyou()
+     * writes the outcome to localStorage. This page listens for that via
+     * the "storage" event -- NOT window.opener, which modern browsers'
+     * Cross-Origin-Opener-Policy can sever even between same-site windows
+     * once a cross-origin hop (to pay.lusopay.com) happens in between;
+     * "storage" fires for any same-origin window/tab regardless of any
+     * opener relationship, so it isn't affected by that.
      */
     public function render_qr_receipt($order_id): void
     {
@@ -141,32 +145,41 @@ class WC_Gateway_LusoPay_Wallet extends WC_Payment_Gateway
         $checkoutPageUrl = $this->checkout_url . '?' . http_build_query($this->build_checkout_params($order));
         ?>
         <div id="lusopay-wallet-popup-wrap" style="max-width:320px;margin:24px auto;text-align:center;">
-            <p>A abrir o pagamento numa nova janela...</p>
-            <p><a href="<?php echo esc_url($checkoutPageUrl); ?>" target="_blank">Clica aqui se a janela não abriu</a></p>
+            <p><a href="<?php echo esc_url($checkoutPageUrl); ?>" target="_blank">Clica aqui se a janela de pagamento não abriu</a></p>
         </div>
         <script>
         (function () {
+            var orderId = <?php echo (int) $order_id; ?>
             var url = <?php echo wp_json_encode($checkoutPageUrl); ?>
-            var popup = window.open(url, 'lusopay_wallet_popup', 'width=440,height=760')
-            if (!popup) {
-                return // blocked by the browser -- the fallback link above still works
-            }
-            var interval = setInterval(function () {
-                if (popup.closed) {
-                    clearInterval(interval)
-                    window.location.reload()
+
+            window.open(url, 'lusopay_wallet_popup', 'width=440,height=760')
+
+            window.addEventListener('storage', function (e) {
+                if (e.key !== 'lusopay_wallet_result' || !e.newValue) {
+                    return
                 }
-            }, 1000)
+                var data = JSON.parse(e.newValue)
+                if (data.order_id !== orderId) {
+                    return
+                }
+                if (data.status === 'AUTHORIZED') {
+                    window.location.href = data.url
+                }
+                // REJECTED: leave this page as-is so the buyer can retry.
+            })
         })()
         </script>
         <?php
     }
 
     /**
-     * Runs when the buyer lands back on WooCommerce's order-received page.
-     * checkout.php appends "status" and "lusopay_session" to the redirect
-     * it sends the buyer to -- "status" is informational only; the actual
-     * decision comes from calling checkout-status.php ourselves.
+     * Runs when the buyer lands back on WooCommerce's order-received page
+     * -- either the wallet's own device (if they scanned the QR there) or
+     * the popup render_qr_receipt() opened, once checkout.php's own JS
+     * redirects it here. checkout.php appends "lusopay_session" to that
+     * redirect -- the actual authorization decision comes from calling
+     * checkout-status.php ourselves, never from a browser-supplied
+     * "status=" query param on its own.
      */
     public function verify_payment_on_thankyou($order_id): void
     {
@@ -195,14 +208,19 @@ class WC_Gateway_LusoPay_Wallet extends WC_Payment_Gateway
                 }
             }
         }
+
+        $resultStatus = $order->is_paid() ? 'AUTHORIZED' : 'REJECTED';
         ?>
         <script>
-        // Reached inside the payment popup render_qr_receipt() opened --
-        // bring the original tab to this same page and close the popup.
-        if (window.opener && !window.opener.closed) {
-            window.opener.location.href = window.location.href
-            window.close()
-        }
+        try {
+            localStorage.setItem('lusopay_wallet_result', JSON.stringify({
+                order_id: <?php echo (int) $order_id; ?>,
+                status: <?php echo wp_json_encode($resultStatus); ?>,
+                url: <?php echo wp_json_encode($this->get_return_url($order)); ?>,
+                ts: Date.now()
+            }))
+        } catch (e) {}
+        window.close()
         </script>
         <?php
     }
