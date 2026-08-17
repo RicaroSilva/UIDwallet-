@@ -124,10 +124,10 @@ class WC_Gateway_LusoPay_Wallet extends WC_Payment_Gateway
                     var btn = document.getElementById('lusopay-wallet-connect-btn')
                     var statusEl = document.getElementById('lusopay-wallet-connect-status')
                     var publicIdField = document.getElementById('woocommerce_lusopay_wallet_public_id')
-                    var ajaxUrl = <?php echo wp_json_encode(admin_url('admin-ajax.php')); ?>
-                    var nonce = <?php echo wp_json_encode(wp_create_nonce('lusopay_wallet_connect')); ?>
-                    var session = <?php echo wp_json_encode($session); ?>
-                    var connectUrl = <?php echo wp_json_encode($connectUrl); ?>
+                    var ajaxUrl = <?php echo wp_json_encode(admin_url('admin-ajax.php')); ?>;
+                    var nonce = <?php echo wp_json_encode(wp_create_nonce('lusopay_wallet_connect')); ?>;
+                    var session = <?php echo wp_json_encode($session); ?>;
+                    var connectUrl = <?php echo wp_json_encode($connectUrl); ?>;
                     var polling = null
 
                     btn.addEventListener('click', function () {
@@ -230,8 +230,8 @@ class WC_Gateway_LusoPay_Wallet extends WC_Payment_Gateway
         </div>
         <script>
         (function () {
-            var orderId = <?php echo (int) $order_id; ?>
-            var url = <?php echo wp_json_encode($checkoutPageUrl); ?>
+            var orderId = <?php echo (int) $order_id; ?>;
+            var url = <?php echo wp_json_encode($checkoutPageUrl); ?>;
 
             window.open(url, 'lusopay_wallet_popup', 'width=440,height=760')
 
