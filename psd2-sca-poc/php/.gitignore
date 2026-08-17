@@ -4,3 +4,4 @@ request-store/
 issuance-store/
 presentation-store/
 oidc-store/
+checkout-store/

@@ -4,15 +4,25 @@
 // the buyer here with query parameters -- no SDK, no API key, no CORS,
 // since it's a plain page redirect (same "hosted checkout" pattern as
 // Stripe Checkout / PayPal).
+//
+// The buyer is identified by presenting their LusoPay Card to a real
+// OpenID4VP request (same DCQL shape as pay-with-card.php) instead of
+// typing in a bank "Public ID" -- once the wallet answers,
+// api/checkout-response.php calls Cyclos's adduidpaymentwallet with the
+// card's lusopay_id to actually move the money.
 
 declare(strict_types=1);
 require __DIR__ . '/vendor/autoload.php';
+
+function base64url_random(int $bytes = 24): string
+{
+    return rtrim(strtr(base64_encode(random_bytes($bytes)), '+/', '-_'), '=');
+}
 
 $amount = $_GET['amount'] ?? null;
 $currency = $_GET['currency'] ?? 'EUR';
 $description = $_GET['description'] ?? 'Compra online';
 $merchant = $_GET['merchant'] ?? 'Loja parceira';
-$publicId = $_GET['publicId'] ?? '';
 $returnUrl = $_GET['return_url'] ?? '';
 
 if ($amount === null || !is_numeric($amount)) {
@@ -21,6 +31,66 @@ if ($amount === null || !is_numeric($amount)) {
     exit;
 }
 $amount = number_format((float) $amount, 2, '.', '');
+
+$session = create_checkout_session([
+    'amount' => $amount,
+    'currency' => $currency,
+    'description' => $description,
+    'merchant' => $merchant,
+    'return_url' => $returnUrl,
+]);
+
+$scheme = (($_SERVER['HTTPS'] ?? '') !== '') ? 'https' : 'http';
+$host = $_SERVER['HTTP_HOST'];
+$basePath = rtrim(str_replace('checkout.php', '', $_SERVER['SCRIPT_NAME']), '/');
+
+$walletResponseUri = "{$scheme}://{$host}{$basePath}/api/checkout-response.php?session={$session}";
+$statusUri = "{$scheme}://{$host}{$basePath}/api/checkout-status.php?session={$session}";
+
+$dcqlQuery = [
+    'credentials' => [
+        [
+            'id' => 'lusopay_card',
+            'format' => 'dc+sd-jwt',
+            'meta' => ['vct_values' => ['urn:lusopay:card:1']],
+            'claims' => [
+                ['path' => ['name'], 'id' => 'name'],
+                ['path' => ['lusopay_id'], 'id' => 'lusopay_id'],
+                ['path' => ['email'], 'id' => 'email'],
+            ],
+        ],
+    ],
+];
+
+$clientMetadata = [
+    'vp_formats_supported' => [
+        'dc+sd-jwt' => [
+            'sd-jwt_alg_values' => ['ES256'],
+            'kb-jwt_alg_values' => ['ES256'],
+        ],
+    ],
+    'client_name' => 'LusoPay',
+    'response_types_supported' => ['vp_token'],
+];
+
+$params = [
+    'response_type' => 'vp_token',
+    'client_id' => 'redirect_uri:' . $walletResponseUri,
+    'response_uri' => $walletResponseUri,
+    'response_mode' => 'direct_post',
+    'nonce' => base64url_random(),
+    'dcql_query' => json_encode($dcqlQuery, JSON_UNESCAPED_SLASHES),
+    'client_metadata' => json_encode($clientMetadata, JSON_UNESCAPED_SLASHES),
+    'state' => base64url_random(),
+];
+
+$queryParts = [];
+foreach ($params as $key => $value) {
+    $queryParts[] = rawurlencode($key) . '=' . rawurlencode((string) $value);
+}
+$authorizationRequestUri = 'openid4vp://?' . implode('&', $queryParts);
+
+$qrCodeDataUrl = qr_code_data_uri($authorizationRequestUri);
 ?>
 <!doctype html>
 <html lang="pt">
@@ -41,25 +111,18 @@ $amount = number_format((float) $amount, 2, '.', '');
   .summary { background: #f8f9fb; border-radius: 12px; padding: 16px; margin-bottom: 18px; }
   .summary .row { display: flex; justify-content: space-between; font-size: 0.9rem; margin: 4px 0; }
   .summary .row.total { font-weight: 700; font-size: 1.05rem; margin-top: 8px; padding-top: 8px; border-top: 1px solid #eef0f3; }
-  label { display: block; font-size: 0.8rem; font-weight: 600; color: #374151; margin: 4px 0 6px; }
-  .hint { font-size: 0.72rem; color: #9ca3af; margin: 4px 0 0; }
-  input[type="text"].full { width: 100%; border: 1px solid #d8dce3; border-radius: 8px; padding: 10px 12px; font-size: 0.9rem; }
-  button { width: 100%; border: none; border-radius: 10px; padding: 13px; font-size: 0.95rem; font-weight: 700; cursor: pointer; margin-top: 16px; }
-  .btn-pay { background: #6d28d9; color: white; }
-  .btn-pay:disabled { background: #c4b5fd; cursor: not-allowed; }
-  .btn-confirm { background: #059669; color: white; }
-  .btn-return { background: #e5e7eb; color: #374151; }
+  .btn-open { display: block; background: #6d28d9; color: #fff; font-weight: 700; padding: 14px; border-radius: 10px; text-decoration: none; margin: 16px 0; text-align: center; }
   .panel { text-align: center; }
   .panel img { width: 220px; height: 220px; border-radius: 12px; border: 1px solid #eef0f3; }
   .panel .caption { font-size: 0.85rem; color: #4b5563; margin: 12px 0 0; }
   .status { padding: 16px; border-radius: 12px; margin-top: 16px; text-align: center; }
+  .status.pending { background: #fef9c3; color: #854d0e; }
   .status.ok { background: #ecfdf5; color: #065f46; }
   .status.fail { background: #fef2f2; color: #991b1b; }
   .status h2 { margin: 0 0 6px; font-size: 1.05rem; }
   .status p { margin: 2px 0; font-size: 0.85rem; }
   .hidden { display: none; }
-  .spinner { width: 22px; height: 22px; margin: 10px auto; border: 3px solid #ddd6fe; border-top-color: #6d28d9; border-radius: 50%; animation: spin 0.8s linear infinite; }
-  @keyframes spin { to { transform: rotate(360deg); } }
+  button { width: 100%; border: none; border-radius: 10px; padding: 13px; font-size: 0.95rem; font-weight: 700; cursor: pointer; margin-top: 16px; background: #e5e7eb; color: #374151; }
 </style>
 </head>
 <body>
@@ -67,126 +130,77 @@ $amount = number_format((float) $amount, 2, '.', '');
     <h1>🔒 LusoPay Checkout</h1>
     <p class="subtitle">Pagamento seguro via Carteira Digital</p>
 
-    <div id="startView">
-      <div class="summary">
-        <div class="row"><span>A pagar a</span><span><?= escape_html($merchant) ?></span></div>
-        <div class="row"><span>Descrição</span><span><?= escape_html($description) ?></span></div>
-        <div class="row total"><span>Total</span><span>€ <?= escape_html($amount) ?></span></div>
-      </div>
-
-      <label for="publicId">O seu Public ID (identifica o seu banco)</label>
-      <input type="text" id="publicId" class="full" value="<?= escape_html($publicId) ?>" />
-      <p class="hint">IDs de teste conhecidos pelo LusoPay: user-1001 (Banco Lusitano), user-2002 (Caixa Real)</p>
-
-      <button id="payButton" class="btn-pay">Pagar com LusoPay / Carteira Digital</button>
+    <div class="summary">
+      <div class="row"><span>A pagar a</span><span><?= escape_html($merchant) ?></span></div>
+      <div class="row"><span>Descrição</span><span><?= escape_html($description) ?></span></div>
+      <div class="row total"><span>Total</span><span>€ <?= escape_html($amount) ?></span></div>
     </div>
 
-    <div id="qrView" class="panel hidden">
-      <div class="spinner" id="qrSpinner"></div>
-      <img id="qrImage" class="hidden" />
-      <p class="caption">Digitalize este código com a sua <strong>Carteira Digital LusoPay</strong> para autorizar o pagamento.</p>
-      <button id="confirmButton" class="btn-confirm hidden">🔓 Simular confirmação na Wallet</button>
+    <div id="qrView" class="panel">
+      <a class="btn-open" href="<?= escape_html($authorizationRequestUri) ?>">📱 Pagar com a Carteira Digital</a>
+      <img id="qrImage" src="<?= $qrCodeDataUrl ?>" alt="QR" />
+      <p class="caption">Digitaliza este código com a tua Carteira Digital LusoPay para identificares a conta a debitar.</p>
     </div>
 
-    <div id="resultView" class="hidden"></div>
+    <div id="statusView" class="status pending">
+      <p>⏳ A aguardar confirmação na wallet...</p>
+    </div>
+
     <div id="returnRow" class="hidden"></div>
   </div>
 
 <script>
-  const MERCHANT = <?= json_encode($merchant) ?>;
-  const AMOUNT = <?= json_encode($amount) ?>;
-  const CURRENCY = <?= json_encode($currency) ?>;
-  const DESCRIPTION = <?= json_encode($description) ?>;
-  const RETURN_URL = <?= json_encode($returnUrl) ?>;
+  const STATUS_URL = <?= json_encode($statusUri) ?>
+  const SESSION = <?= json_encode($session) ?>
+  const RETURN_URL = <?= json_encode($returnUrl) ?>
+  const MERCHANT = <?= json_encode($merchant) ?>
 
-  const startView = document.getElementById('startView')
   const qrView = document.getElementById('qrView')
-  const resultView = document.getElementById('resultView')
+  const statusView = document.getElementById('statusView')
   const returnRow = document.getElementById('returnRow')
-  const payButton = document.getElementById('payButton')
-  const confirmButton = document.getElementById('confirmButton')
-  const qrSpinner = document.getElementById('qrSpinner')
-  const qrImage = document.getElementById('qrImage')
 
-  let pendingTransactionData = null
-  let pendingHolderBindingProof = null
-
-  payButton.addEventListener('click', async () => {
-    const publicId = document.getElementById('publicId').value
-    payButton.disabled = true
-    payButton.textContent = 'A gerar pedido de pagamento...'
-
+  async function poll() {
     try {
-      const response = await fetch('api/checkout-start.php', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ merchant: MERCHANT, amount: AMOUNT, currency: CURRENCY }),
-      })
+      const response = await fetch(STATUS_URL)
       const data = await response.json()
-      if (!response.ok) throw new Error(data.error || 'falha ao iniciar o pagamento')
 
-      pendingTransactionData = data.transactionData
-      pendingHolderBindingProof = data.holderBindingProof
-
-      startView.classList.add('hidden')
-      qrView.classList.remove('hidden')
-      qrSpinner.classList.add('hidden')
-      qrImage.src = data.qrCodeDataUrl
-      qrImage.classList.remove('hidden')
-      confirmButton.classList.remove('hidden')
+      if (data.status === 'AUTHORIZED') {
+        qrView.classList.add('hidden')
+        statusView.className = 'status ok'
+        statusView.innerHTML = '<h2>✅ Pagamento autorizado</h2><p>Transação: ' + data.transaction_id + '</p>'
+        showReturn(data)
+        return
+      }
+      if (data.status === 'REJECTED') {
+        qrView.classList.add('hidden')
+        statusView.className = 'status fail'
+        statusView.innerHTML = '<h2>❌ Pagamento rejeitado</h2><p>' + (data.errors || []).join('<br/>') + '</p>'
+        showReturn(data)
+        return
+      }
     } catch (error) {
-      alert('Erro ao iniciar pagamento: ' + error.message)
-      payButton.disabled = false
-      payButton.textContent = 'Pagar com LusoPay / Carteira Digital'
+      // keep polling -- a transient network hiccup shouldn't stop the flow
     }
-  })
+    setTimeout(poll, 2000)
+  }
 
-  confirmButton.addEventListener('click', async () => {
-    confirmButton.disabled = true
-    confirmButton.textContent = 'A validar na Wallet...'
+  function showReturn(data) {
+    if (!RETURN_URL) return
+    const url = new URL(RETURN_URL)
+    url.searchParams.set('status', data.status)
+    url.searchParams.set('lusopay_session', SESSION)
+    if (data.transaction_id) url.searchParams.set('transaction_id', data.transaction_id)
+    returnRow.classList.remove('hidden')
+    returnRow.innerHTML = '<button id="returnButton">Voltar a ' + MERCHANT + '</button>'
+    document.getElementById('returnButton').addEventListener('click', () => {
+      window.location.href = url.toString()
+    })
+    // Also go automatically after a short pause, for integrations (like a
+    // WooCommerce order-received redirect) that expect this on their own.
+    setTimeout(() => { window.location.href = url.toString() }, 2500)
+  }
 
-    const publicId = document.getElementById('publicId').value
-    let result
-    try {
-      const response = await fetch('api/checkout-confirm.php', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          transactionData: pendingTransactionData,
-          holderBindingProof: pendingHolderBindingProof,
-          publicId,
-        }),
-      })
-      result = await response.json()
-    } catch (error) {
-      result = { status: 'REJECTED', errors: [error.message] }
-    }
-
-    qrView.classList.add('hidden')
-    resultView.classList.remove('hidden')
-
-    if (result.status === 'AUTHORIZED') {
-      resultView.innerHTML =
-        '<div class="status ok"><h2>✅ Pagamento autorizado</h2>' +
-        '<p>Transação: ' + result.transaction_id + '</p>' +
-        '<p>Banco: ' + (result.bank || '-') + '</p></div>'
-    } else {
-      resultView.innerHTML =
-        '<div class="status fail"><h2>❌ Pagamento rejeitado</h2>' +
-        '<p>' + (result.errors || []).join('<br/>') + '</p></div>'
-    }
-
-    if (RETURN_URL) {
-      const url = new URL(RETURN_URL)
-      url.searchParams.set('status', result.status)
-      if (result.transaction_id) url.searchParams.set('transaction_id', result.transaction_id)
-      returnRow.classList.remove('hidden')
-      returnRow.innerHTML = '<button class="btn-return" id="returnButton">Voltar a ' + MERCHANT + '</button>'
-      document.getElementById('returnButton').addEventListener('click', () => {
-        window.location.href = url.toString()
-      })
-    }
-  })
+  poll()
 </script>
 </body>
 </html>

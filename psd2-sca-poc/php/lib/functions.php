@@ -680,3 +680,107 @@ function build_oidc_id_token(array $claims, ?string $nonce): string
 
     return $signingInput . '.' . base64url_encode(der_ecdsa_signature_to_jose($derSignature));
 }
+
+// --- Wallet-identified checkout (real OpenID4VP) + payment execution --
+// checkout.php's actual flow: instead of a typed-in "Public ID" and a
+// simulated confirmation, the buyer presents their LusoPay Card (same
+// DCQL request as pay-with-card.php), and once that's verified we call
+// Cyclos to actually move the money, keyed by the card's lusopay_id.
+
+const WALLET_PAYMENT_ENDPOINT = 'https://dev.lusopay.com:8444/web_dev/run/adduidpaymentwallet';
+const CHECKOUT_STORE_DIR = __DIR__ . '/../checkout-store';
+
+function checkout_store_path(string $session): string
+{
+    if (!is_dir(CHECKOUT_STORE_DIR)) {
+        mkdir(CHECKOUT_STORE_DIR, 0700, true);
+    }
+    // $session is always our own generated random token -- safe as a filename.
+    return CHECKOUT_STORE_DIR . '/' . $session . '.json';
+}
+
+/**
+ * Starts a new checkout session holding the amount/currency/description
+ * this payment is for, keyed by a random session id embedded in the
+ * OpenID4VP request's response_uri so api/checkout-response.php can find
+ * it again once the wallet answers.
+ */
+function create_checkout_session(array $params): string
+{
+    $session = bin2hex(random_bytes(16));
+    file_put_contents(checkout_store_path($session), json_encode(['params' => $params, 'status' => 'PENDING']));
+    return $session;
+}
+
+function get_checkout_session(string $session): ?array
+{
+    $path = checkout_store_path($session);
+    if (!is_file($path)) {
+        return null;
+    }
+    return json_decode(file_get_contents($path), true);
+}
+
+function update_checkout_session(string $session, array $fields): void
+{
+    $data = get_checkout_session($session);
+    if ($data === null) {
+        return;
+    }
+    file_put_contents(checkout_store_path($session), json_encode(array_merge($data, $fields)));
+}
+
+/**
+ * Calls the Cyclos "adduidpaymentwallet" script to actually move the
+ * money for the given (wallet-verified) lusopay_id, and returns whether
+ * it reports the payment as done.
+ *
+ * ASSUMPTION, not yet confirmed against the real script: accepts a bare
+ * "true"/"false" body, a JSON boolean, or {"result": true/false}. Adjust
+ * this once the actual Cyclos script's response shape is known.
+ */
+function execute_wallet_payment(string $lusopayId, string $amount, string $currency, string $description): bool
+{
+    $payload = [
+        'lusopay_id' => $lusopayId,
+        'amount' => $amount,
+        'currency' => $currency,
+        'description' => $description,
+    ];
+
+    $ch = curl_init(WALLET_PAYMENT_ENDPOINT);
+    curl_setopt_array($ch, [
+        CURLOPT_POST => true,
+        CURLOPT_POSTFIELDS => json_encode($payload),
+        CURLOPT_HTTPHEADER => ['Content-Type: application/json'],
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_CONNECTTIMEOUT => 6,
+        CURLOPT_TIMEOUT => 15,
+    ]);
+    $response = curl_exec($ch);
+    $error = curl_error($ch);
+    curl_close($ch);
+
+    if ($response === false) {
+        error_log("[LUSOPAY-CHECKOUT] adduidpaymentwallet unreachable: {$error}");
+        return false;
+    }
+
+    $trimmed = trim($response);
+    if (strcasecmp($trimmed, 'true') === 0) {
+        return true;
+    }
+    if (strcasecmp($trimmed, 'false') === 0) {
+        return false;
+    }
+    $decoded = json_decode($trimmed, true);
+    if (is_bool($decoded)) {
+        return $decoded;
+    }
+    if (is_array($decoded) && array_key_exists('result', $decoded)) {
+        return (bool) $decoded['result'];
+    }
+
+    error_log("[LUSOPAY-CHECKOUT] unrecognized adduidpaymentwallet response: {$response}");
+    return false;
+}
