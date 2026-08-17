@@ -107,53 +107,94 @@ class WC_Gateway_LusoPay_Wallet extends WC_Payment_Gateway
      * with their wallet, instead of typing it in by hand. Pre-generates
      * the session id here so the JS can poll for it without needing to
      * scrape it out of the popup's page.
+     *
+     * The raw "public_id" text field still exists (it's what actually
+     * gets saved/read as the option) but is hidden from view here --
+     * this row is the only thing the store owner needs to see, and it
+     * always reflects whatever is currently saved, not just this page
+     * load's connect attempt.
      */
     public function generate_connect_html(): string
     {
         $session = wp_generate_password(24, false, false);
         $connectUrl = $this->connect_url . '?session=' . rawurlencode($session);
+        $connected = $this->public_id !== '';
         ob_start();
         ?>
         <tr valign="top">
-            <th scope="row" class="titledesc">Ligar a conta LusoPay</th>
+            <th scope="row" class="titledesc">Conta LusoPay</th>
             <td class="forminp">
-                <button type="button" class="button" id="lusopay-wallet-connect-btn">Ligar com a Carteira Digital</button>
-                <span id="lusopay-wallet-connect-status" style="margin-left:8px;"></span>
+                <p id="lusopay-wallet-connect-status" style="margin:0 0 10px;">
+                    <?php if ($connected): ?>
+                        ✅ Ligado como <strong><?php echo esc_html($this->public_id); ?></strong>
+                    <?php else: ?>
+                        ⚠️ Conta ainda não ligada.
+                    <?php endif; ?>
+                </p>
+                <button type="button" class="button" id="lusopay-wallet-connect-btn"><?php echo $connected ? 'Ligar a outra conta' : 'Ligar com a Carteira Digital'; ?></button>
                 <script>
                 (function () {
-                    var btn = document.getElementById('lusopay-wallet-connect-btn')
-                    var statusEl = document.getElementById('lusopay-wallet-connect-status')
-                    var publicIdField = document.getElementById('woocommerce_lusopay_wallet_public_id')
+                    var btn = document.getElementById('lusopay-wallet-connect-btn');
+                    var statusEl = document.getElementById('lusopay-wallet-connect-status');
+                    var publicIdField = document.getElementById('woocommerce_lusopay_wallet_public_id');
                     var ajaxUrl = <?php echo wp_json_encode(admin_url('admin-ajax.php')); ?>;
                     var nonce = <?php echo wp_json_encode(wp_create_nonce('lusopay_wallet_connect')); ?>;
                     var session = <?php echo wp_json_encode($session); ?>;
                     var connectUrl = <?php echo wp_json_encode($connectUrl); ?>;
-                    var polling = null
+                    var polling = null;
+                    var popupRef = null;
+
+                    // The Public ID is managed entirely through the button
+                    // above -- the store owner never needs to see or type
+                    // the raw value, only the row still has to exist so the
+                    // value round-trips through WooCommerce's normal
+                    // settings save/read.
+                    if (publicIdField) {
+                        var row = publicIdField.closest('tr');
+                        if (row) { row.style.display = 'none'; }
+                    }
 
                     btn.addEventListener('click', function () {
-                        window.open(connectUrl, 'lusopay_wallet_connect', 'width=440,height=760')
-                        statusEl.textContent = 'A aguardar leitura do cartão...'
-                        clearInterval(polling)
-                        polling = setInterval(poll, 2000)
-                    })
+                        popupRef = window.open(connectUrl, 'lusopay_wallet_connect', 'width=440,height=760');
+                        statusEl.textContent = 'A aguardar leitura do cartão...';
+                        clearInterval(polling);
+                        polling = setInterval(poll, 2000);
+                    });
 
                     function poll() {
-                        var url = ajaxUrl + '?action=lusopay_wallet_connect_status&session=' + encodeURIComponent(session) + '&nonce=' + encodeURIComponent(nonce)
+                        var url = ajaxUrl + '?action=lusopay_wallet_connect_status&session=' + encodeURIComponent(session) + '&nonce=' + encodeURIComponent(nonce);
                         fetch(url)
-                            .then(function (r) { return r.json() })
+                            .then(function (r) { return r.json(); })
                             .then(function (data) {
                                 if (data.status === 'OK' && data.lusopay_id) {
-                                    clearInterval(polling)
-                                    publicIdField.value = data.lusopay_id
-                                    statusEl.textContent = '✅ Ligado como ' + data.lusopay_id + (data.name ? ' (' + data.name + ')' : '') + ' -- clica em "Guardar alterações".'
+                                    clearInterval(polling);
+                                    // The parent page (here) is the one that
+                                    // knows the outcome -- close the wallet
+                                    // popup itself instead of leaving it up
+                                    // to that page to close on its own.
+                                    if (popupRef && !popupRef.closed) { popupRef.close(); }
+                                    if (publicIdField) {
+                                        publicIdField.value = data.lusopay_id;
+                                        // Setting .value directly doesn't fire
+                                        // input/change, so anything watching
+                                        // the form for "unsaved changes"
+                                        // (including the Guardar alterações
+                                        // button) never notices -- dispatch
+                                        // both explicitly.
+                                        publicIdField.dispatchEvent(new Event('input', { bubbles: true }));
+                                        publicIdField.dispatchEvent(new Event('change', { bubbles: true }));
+                                    }
+                                    statusEl.innerHTML = '✅ Ligado como <strong>' + data.lusopay_id + '</strong>' + (data.name ? ' (' + data.name + ')' : '') + ' -- clica em "Guardar alterações" para confirmar.';
+                                    btn.textContent = 'Ligar a outra conta';
                                 } else if (data.status && data.status !== 'PENDING') {
-                                    clearInterval(polling)
-                                    statusEl.textContent = '❌ Não foi possível ler o cartão. Tenta novamente.'
+                                    clearInterval(polling);
+                                    if (popupRef && !popupRef.closed) { popupRef.close(); }
+                                    statusEl.textContent = '❌ Não foi possível ler o cartão. Tenta novamente.';
                                 }
                             })
-                            .catch(function () {})
+                            .catch(function () {});
                     }
-                })()
+                })();
                 </script>
             </td>
         </tr>
