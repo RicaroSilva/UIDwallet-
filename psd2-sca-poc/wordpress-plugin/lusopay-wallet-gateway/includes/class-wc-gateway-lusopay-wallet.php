@@ -30,6 +30,8 @@ class WC_Gateway_LusoPay_Wallet extends WC_Payment_Gateway
         $this->checkout_url = $this->get_option('checkout_url');
         $this->status_url = $this->get_option('status_url');
         $this->public_id = $this->get_option('public_id');
+        $this->connect_url = $this->get_option('connect_url');
+        $this->connect_result_url = $this->get_option('connect_result_url');
 
         add_action('woocommerce_update_options_payment_gateways_' . $this->id, [$this, 'process_admin_options']);
         add_action('woocommerce_thankyou_' . $this->id, [$this, 'verify_payment_on_thankyou']);
@@ -74,10 +76,89 @@ class WC_Gateway_LusoPay_Wallet extends WC_Payment_Gateway
             'public_id' => [
                 'title' => 'Public ID (LusoPay)',
                 'type' => 'text',
-                'description' => 'O identificador LusoPay/Cyclos desta loja -- é para esta conta que o dinheiro é enviado em cada pagamento.',
+                'description' => 'O identificador LusoPay/Cyclos desta loja -- é para esta conta que o dinheiro é enviado em cada pagamento. Podes preenchê-lo à mão ou usar "Ligar com a Carteira Digital" abaixo.',
+                'desc_tip' => true,
+            ],
+            'connect' => [
+                'title' => 'Ligar a conta LusoPay',
+                'type' => 'connect',
+            ],
+            'connect_url' => [
+                'title' => 'URL para ligar a carteira',
+                'type' => 'text',
+                'default' => 'https://pay.lusopay.com/uidwallettest/pay-with-card.php',
+                'description' => 'Página que pede o LusoPay Card de quem liga a conta (usada pelo botão "Ligar com a Carteira Digital").',
+                'desc_tip' => true,
+            ],
+            'connect_result_url' => [
+                'title' => 'URL do resultado da ligação',
+                'type' => 'text',
+                'default' => 'https://pay.lusopay.com/uidwallettest/pay-with-card-result.php',
                 'desc_tip' => true,
             ],
         ];
+    }
+
+    /**
+     * Custom WooCommerce settings field type: a button that opens
+     * connect_url in a popup (the same LusoPay Card OpenID4VP flow
+     * pay-with-card.php already serves for other purposes) so the store
+     * owner can associate their own account's Public ID by scanning it
+     * with their wallet, instead of typing it in by hand. Pre-generates
+     * the session id here so the JS can poll for it without needing to
+     * scrape it out of the popup's page.
+     */
+    public function generate_connect_html(): string
+    {
+        $session = wp_generate_password(24, false, false);
+        $connectUrl = $this->connect_url . '?session=' . rawurlencode($session);
+        ob_start();
+        ?>
+        <tr valign="top">
+            <th scope="row" class="titledesc">Ligar a conta LusoPay</th>
+            <td class="forminp">
+                <button type="button" class="button" id="lusopay-wallet-connect-btn">Ligar com a Carteira Digital</button>
+                <span id="lusopay-wallet-connect-status" style="margin-left:8px;"></span>
+                <script>
+                (function () {
+                    var btn = document.getElementById('lusopay-wallet-connect-btn')
+                    var statusEl = document.getElementById('lusopay-wallet-connect-status')
+                    var publicIdField = document.getElementById('woocommerce_lusopay_wallet_public_id')
+                    var ajaxUrl = <?php echo wp_json_encode(admin_url('admin-ajax.php')); ?>
+                    var nonce = <?php echo wp_json_encode(wp_create_nonce('lusopay_wallet_connect')); ?>
+                    var session = <?php echo wp_json_encode($session); ?>
+                    var connectUrl = <?php echo wp_json_encode($connectUrl); ?>
+                    var polling = null
+
+                    btn.addEventListener('click', function () {
+                        window.open(connectUrl, 'lusopay_wallet_connect', 'width=440,height=760')
+                        statusEl.textContent = 'A aguardar leitura do cartão...'
+                        clearInterval(polling)
+                        polling = setInterval(poll, 2000)
+                    })
+
+                    function poll() {
+                        var url = ajaxUrl + '?action=lusopay_wallet_connect_status&session=' + encodeURIComponent(session) + '&nonce=' + encodeURIComponent(nonce)
+                        fetch(url)
+                            .then(function (r) { return r.json() })
+                            .then(function (data) {
+                                if (data.status === 'OK' && data.lusopay_id) {
+                                    clearInterval(polling)
+                                    publicIdField.value = data.lusopay_id
+                                    statusEl.textContent = '✅ Ligado como ' + data.lusopay_id + (data.name ? ' (' + data.name + ')' : '') + ' -- clica em "Guardar alterações".'
+                                } else if (data.status && data.status !== 'PENDING') {
+                                    clearInterval(polling)
+                                    statusEl.textContent = '❌ Não foi possível ler o cartão. Tenta novamente.'
+                                }
+                            })
+                            .catch(function () {})
+                    }
+                })()
+                </script>
+            </td>
+        </tr>
+        <?php
+        return ob_get_clean();
     }
 
     public function process_payment($order_id)

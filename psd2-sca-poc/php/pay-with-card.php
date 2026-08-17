@@ -9,6 +9,11 @@
 // This page only retrieves the card's data and hands it off -- it does not
 // itself authorize or execute a payment; that's for whatever calls this
 // flow to build on top of the retrieved name/lusopay_id.
+//
+// Accepts an optional ?session= from the caller (e.g. the WooCommerce
+// plugin's "Ligar com a Carteira Digital" admin button) so it can know
+// the session id up front, before the wallet answers, instead of having
+// to scrape it out of this page. Falls back to a random one otherwise.
 
 declare(strict_types=1);
 require __DIR__ . '/vendor/autoload.php';
@@ -22,7 +27,8 @@ $scheme = (($_SERVER['HTTPS'] ?? '') !== '') ? 'https' : 'http';
 $host = $_SERVER['HTTP_HOST'];
 $basePath = rtrim(str_replace('pay-with-card.php', '', $_SERVER['SCRIPT_NAME']), '/');
 
-$session = base64url_random(8);
+$requestedSession = $_GET['session'] ?? '';
+$session = preg_match('/^[A-Za-z0-9_-]{8,64}$/', $requestedSession) ? $requestedSession : base64url_random(8);
 $responseUri = "{$scheme}://{$host}{$basePath}/api/pay-with-card-response.php?session={$session}";
 $resultUri = "{$scheme}://{$host}{$basePath}/pay-with-card-result.php?session={$session}";
 $nonce = base64url_random();
