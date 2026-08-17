@@ -1,9 +1,10 @@
 <?php
 // api/checkout-response.php
 // Receives the wallet's OpenID4VP direct_post for checkout.php. Verifies
-// the presented LusoPay Card, then calls Cyclos's adduidpaymentwallet
-// with the card's lusopay_id to actually move the money for this
-// checkout session's amount.
+// the presented LusoPay Card, then calls Cyclos's adduidpayment with the
+// card's lusopay_id (the buyer, paying) and the checkout session's
+// merchant_public_id (the receiver, set by whoever integrated
+// checkout.php) to actually move the money for this session's amount.
 
 declare(strict_types=1);
 require __DIR__ . '/../vendor/autoload.php';
@@ -57,6 +58,7 @@ if (!$signatureValid || !$lusopayId) {
 $checkoutParams = $checkoutSession['params'];
 $authorized = execute_wallet_payment(
     (string) $lusopayId,
+    $checkoutParams['merchant_public_id'],
     $checkoutParams['amount'],
     $checkoutParams['currency'],
     $checkoutParams['description']

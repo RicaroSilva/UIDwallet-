@@ -682,12 +682,15 @@ function build_oidc_id_token(array $claims, ?string $nonce): string
 }
 
 // --- Wallet-identified checkout (real OpenID4VP) + payment execution --
-// checkout.php's actual flow: instead of a typed-in "Public ID" and a
-// simulated confirmation, the buyer presents their LusoPay Card (same
-// DCQL request as pay-with-card.php), and once that's verified we call
-// Cyclos to actually move the money, keyed by the card's lusopay_id.
+// checkout.php's actual flow: instead of the buyer typing in their own
+// "Public ID" and a simulated confirmation, they present their LusoPay
+// Card (same DCQL request as pay-with-card.php) so we learn their
+// publicId from the wallet -- the merchant's own receiving publicId
+// comes from wherever integrates checkout.php (e.g. the WooCommerce
+// gateway's settings), not from the buyer. Both go to Cyclos's existing
+// adduidpayment endpoint (the same CYCLOS_ENDPOINT already used by
+// notify_cyclos() above) alongside the amount/description.
 
-const WALLET_PAYMENT_ENDPOINT = 'https://dev.lusopay.com:8444/web_dev/run/adduidpaymentwallet';
 const CHECKOUT_STORE_DIR = __DIR__ . '/../checkout-store';
 
 function checkout_store_path(string $session): string
@@ -731,24 +734,28 @@ function update_checkout_session(string $session, array $fields): void
 }
 
 /**
- * Calls the Cyclos "adduidpaymentwallet" script to actually move the
- * money for the given (wallet-verified) lusopay_id, and returns whether
- * it reports the payment as done.
+ * Calls Cyclos's adduidpayment with both sides of the payment -- the
+ * buyer's publicId (from the presented LusoPay Card) and the merchant's
+ * own receiving publicId (configured wherever integrates checkout.php,
+ * e.g. the WooCommerce gateway's settings) -- plus the amount/description,
+ * and returns whether it reports the payment as done.
  *
- * ASSUMPTION, not yet confirmed against the real script: accepts a bare
- * "true"/"false" body, a JSON boolean, or {"result": true/false}. Adjust
- * this once the actual Cyclos script's response shape is known.
+ * ASSUMPTION, not yet confirmed against the real script: the receiving
+ * side's field name ("receiverPublicId") is a guess, and the response is
+ * assumed to be a bare "true"/"false" body, a JSON boolean, or
+ * {"result": true/false}. Adjust both once the actual script is written.
  */
-function execute_wallet_payment(string $lusopayId, string $amount, string $currency, string $description): bool
+function execute_wallet_payment(string $payerPublicId, string $receiverPublicId, string $amount, string $currency, string $description): bool
 {
     $payload = [
-        'lusopay_id' => $lusopayId,
+        'publicId' => $payerPublicId,
+        'receiverPublicId' => $receiverPublicId,
         'amount' => $amount,
         'currency' => $currency,
         'description' => $description,
     ];
 
-    $ch = curl_init(WALLET_PAYMENT_ENDPOINT);
+    $ch = curl_init(CYCLOS_ENDPOINT);
     curl_setopt_array($ch, [
         CURLOPT_POST => true,
         CURLOPT_POSTFIELDS => json_encode($payload),
@@ -762,7 +769,7 @@ function execute_wallet_payment(string $lusopayId, string $amount, string $curre
     curl_close($ch);
 
     if ($response === false) {
-        error_log("[LUSOPAY-CHECKOUT] adduidpaymentwallet unreachable: {$error}");
+        error_log("[LUSOPAY-CHECKOUT] adduidpayment unreachable: {$error}");
         return false;
     }
 
@@ -781,6 +788,6 @@ function execute_wallet_payment(string $lusopayId, string $amount, string $curre
         return (bool) $decoded['result'];
     }
 
-    error_log("[LUSOPAY-CHECKOUT] unrecognized adduidpaymentwallet response: {$response}");
+    error_log("[LUSOPAY-CHECKOUT] unrecognized adduidpayment response: {$response}");
     return false;
 }

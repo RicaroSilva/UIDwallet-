@@ -7,9 +7,11 @@
 //
 // The buyer is identified by presenting their LusoPay Card to a real
 // OpenID4VP request (same DCQL shape as pay-with-card.php) instead of
-// typing in a bank "Public ID" -- once the wallet answers,
-// api/checkout-response.php calls Cyclos's adduidpaymentwallet with the
-// card's lusopay_id to actually move the money.
+// typing in their own "Public ID" -- once the wallet answers,
+// api/checkout-response.php calls Cyclos's adduidpayment with the buyer's
+// publicId (from the card) and the merchant's own receiving
+// merchant_public_id (passed in below by whoever integrates this page,
+// e.g. the WooCommerce gateway's settings) to actually move the money.
 
 declare(strict_types=1);
 require __DIR__ . '/vendor/autoload.php';
@@ -24,10 +26,16 @@ $currency = $_GET['currency'] ?? 'EUR';
 $description = $_GET['description'] ?? 'Compra online';
 $merchant = $_GET['merchant'] ?? 'Loja parceira';
 $returnUrl = $_GET['return_url'] ?? '';
+$merchantPublicId = $_GET['merchant_public_id'] ?? '';
 
 if ($amount === null || !is_numeric($amount)) {
     http_response_code(400);
     echo 'parâmetro "amount" é obrigatório e deve ser numérico';
+    exit;
+}
+if ($merchantPublicId === '') {
+    http_response_code(400);
+    echo 'parâmetro "merchant_public_id" é obrigatório (identifica quem recebe o pagamento)';
     exit;
 }
 $amount = number_format((float) $amount, 2, '.', '');
@@ -38,6 +46,7 @@ $session = create_checkout_session([
     'description' => $description,
     'merchant' => $merchant,
     'return_url' => $returnUrl,
+    'merchant_public_id' => $merchantPublicId,
 ]);
 
 $scheme = (($_SERVER['HTTPS'] ?? '') !== '') ? 'https' : 'http';

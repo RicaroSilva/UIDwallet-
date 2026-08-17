@@ -26,6 +26,7 @@ class WC_Gateway_LusoPay_Wallet extends WC_Payment_Gateway
         $this->description = $this->get_option('description');
         $this->checkout_url = $this->get_option('checkout_url');
         $this->status_url = $this->get_option('status_url');
+        $this->public_id = $this->get_option('public_id');
 
         add_action('woocommerce_update_options_payment_gateways_' . $this->id, [$this, 'process_admin_options']);
         add_action('woocommerce_thankyou_' . $this->id, [$this, 'verify_payment_on_thankyou']);
@@ -66,6 +67,12 @@ class WC_Gateway_LusoPay_Wallet extends WC_Payment_Gateway
                 'description' => 'Usado para confirmar o resultado do lado do servidor, sem confiar apenas no redirecionamento do browser.',
                 'desc_tip' => true,
             ],
+            'public_id' => [
+                'title' => 'Public ID (LusoPay)',
+                'type' => 'text',
+                'description' => 'O identificador LusoPay/Cyclos desta loja -- é para esta conta que o dinheiro é enviado em cada pagamento.',
+                'desc_tip' => true,
+            ],
         ];
     }
 
@@ -77,6 +84,11 @@ class WC_Gateway_LusoPay_Wallet extends WC_Payment_Gateway
             return ['result' => 'failure'];
         }
 
+        if ($this->public_id === '') {
+            wc_add_notice('O método de pagamento LusoPay Wallet não está configurado (falta o Public ID da loja).', 'error');
+            return ['result' => 'failure'];
+        }
+
         $returnUrl = add_query_arg('lusopay_order', $order_id, $this->get_return_url($order));
 
         $params = [
@@ -84,6 +96,7 @@ class WC_Gateway_LusoPay_Wallet extends WC_Payment_Gateway
             'currency' => $order->get_currency(),
             'description' => sprintf('Encomenda #%s', $order->get_order_number()),
             'merchant' => get_bloginfo('name'),
+            'merchant_public_id' => $this->public_id,
             'return_url' => $returnUrl,
         ];
 
