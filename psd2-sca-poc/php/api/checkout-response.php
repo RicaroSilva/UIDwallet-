@@ -87,6 +87,15 @@ if (!$keyBinding['valid']) {
 }
 
 $checkoutParams = $checkoutSession['params'];
+// Cyclos requires orderReference to be non-empty -- WooCommerce's real
+// order id usually isn't known yet at this point (see checkout_id
+// comments in lusopay-wallet-blocks.js: the Blocks flow asks the wallet
+// for payment *before* the order exists), so fall back to this
+// session's own id, which is always present and unique per attempt.
+// Once the WooCommerce order is created, it's tagged with this same
+// session id as order meta (see process_payment() in
+// class-wc-gateway-lusopay-wallet.php) -- match the two up by that.
+$orderReference = ($checkoutParams['order_id'] ?? '') !== '' ? $checkoutParams['order_id'] : $session;
 $cyclosDebug = null;
 $authorized = execute_wallet_payment(
     (string) $lusopayId,
@@ -94,7 +103,7 @@ $authorized = execute_wallet_payment(
     $checkoutParams['amount'],
     $checkoutParams['currency'],
     $checkoutParams['description'],
-    $checkoutParams['order_id'] ?? '',
+    $orderReference,
     $cyclosDebug
 );
 

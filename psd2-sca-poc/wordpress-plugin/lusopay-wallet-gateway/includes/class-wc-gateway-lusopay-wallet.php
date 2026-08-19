@@ -236,8 +236,15 @@ class WC_Gateway_LusoPay_Wallet extends WC_Payment_Gateway
             if (!is_wp_error($response)) {
                 $data = json_decode(wp_remote_retrieve_body($response), true);
                 if (($data['status'] ?? null) === 'AUTHORIZED') {
+                    // Cyclos required a non-empty "orderReference" before
+                    // this order existed to have a real id yet, so it was
+                    // sent this same LusoPay session id instead (see
+                    // api/checkout-response.php). Tag the order with it
+                    // so the two sides can be matched up by hand (or by
+                    // script) later, from either direction.
+                    $order->update_meta_data('_lusopay_wallet_session', $walletSession);
                     $order->payment_complete($data['transaction_id'] ?? '');
-                    $order->add_order_note('Pago via LusoPay Wallet (transação ' . ($data['transaction_id'] ?? '?') . ').');
+                    $order->add_order_note('Pago via LusoPay Wallet (transação ' . ($data['transaction_id'] ?? '?') . ', sessão ' . $walletSession . ').');
                     return [
                         'result' => 'success',
                         'redirect' => $this->get_return_url($order),
