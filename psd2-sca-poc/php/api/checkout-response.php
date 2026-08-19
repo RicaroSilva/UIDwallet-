@@ -56,12 +56,14 @@ if (!$signatureValid || !$lusopayId) {
 }
 
 $checkoutParams = $checkoutSession['params'];
+$cyclosDebug = null;
 $authorized = execute_wallet_payment(
     (string) $lusopayId,
     $checkoutParams['merchant_public_id'],
     $checkoutParams['amount'],
     $checkoutParams['currency'],
-    $checkoutParams['description']
+    $checkoutParams['description'],
+    $cyclosDebug
 );
 
 if ($authorized) {
@@ -72,7 +74,15 @@ if ($authorized) {
         'name' => $parsed['claims']['name'] ?? null,
     ]);
 } else {
-    update_checkout_session($session, ['status' => 'REJECTED', 'errors' => ['pagamento rejeitado pelo Cyclos']]);
+    // "debug" is not returned by api/checkout-status.php (it only
+    // returns status/transaction_id/errors) -- it's only visible via
+    // debug-checkout.php, so the raw adduidpayment response is
+    // inspectable without needing access to this server's PHP error log.
+    update_checkout_session($session, [
+        'status' => 'REJECTED',
+        'errors' => ['pagamento rejeitado pelo Cyclos'],
+        'debug' => $cyclosDebug,
+    ]);
 }
 
 echo json_encode([]);

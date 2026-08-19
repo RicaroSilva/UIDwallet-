@@ -752,7 +752,7 @@ function update_checkout_session(string $session, array $fields): void
  * assumed to be a bare "true"/"false" body, a JSON boolean, or
  * {"result": true/false}. Adjust both once the actual script is written.
  */
-function execute_wallet_payment(string $payerPublicId, string $receiverPublicId, string $amount, string $currency, string $description): bool
+function execute_wallet_payment(string $payerPublicId, string $receiverPublicId, string $amount, string $currency, string $description, ?array &$debug = null): bool
 {
     $payload = [
         'publicId' => $payerPublicId,
@@ -773,7 +773,21 @@ function execute_wallet_payment(string $payerPublicId, string $receiverPublicId,
     ]);
     $response = curl_exec($ch);
     $error = curl_error($ch);
+    $httpStatus = curl_getinfo($ch, CURLINFO_HTTP_CODE);
     curl_close($ch);
+
+    // Callers (checkout-response.php) persist this into the checkout
+    // session's "debug" field -- not returned by api/checkout-status.php,
+    // only visible through debug-checkout.php -- so the raw Cyclos
+    // response is actually visible somewhere without needing access to
+    // this server's PHP error log.
+    $debug = [
+        'endpoint' => CYCLOS_ENDPOINT,
+        'sent' => $payload,
+        'http_status' => $httpStatus,
+        'curl_error' => $error !== '' ? $error : null,
+        'raw_response' => $response === false ? null : $response,
+    ];
 
     if ($response === false) {
         error_log("[LUSOPAY-CHECKOUT] adduidpayment unreachable: {$error}");
