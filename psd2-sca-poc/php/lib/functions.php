@@ -521,6 +521,60 @@ function parse_sd_jwt_vc_presentation(string $presentation): array
     ];
 }
 
+/**
+ * Verifies the SD-JWT VC presentation's Key Binding JWT -- this is the
+ * actual proof that whoever presented the card, right now, holds the
+ * private key matching the "cnf.jwk" it was issued with (a different
+ * key/signature than the issuer JWT, which only proves the card itself
+ * is genuine, not that this specific presentation is fresh or came from
+ * that device). Checks:
+ *
+ *   - signature: made with the holder's own key, not the issuer's.
+ *   - nonce: matches the one *we* generated for *this* checkout session
+ *     -- without this, a captured/old presentation could be replayed.
+ *   - aud: addressed to *this* verifier/session, not some other one.
+ *   - iat: recent, so a captured KB-JWT can't be replayed indefinitely.
+ *
+ * Returns ['valid' => bool, 'reason' => ?string, 'iat' => ?int].
+ */
+function verify_holder_key_binding(?string $kbJwt, ?array $holderJwk, ?string $expectedNonce, string $expectedAud, int $maxAgeSeconds = 300): array
+{
+    if ($kbJwt === null) {
+        return ['valid' => false, 'reason' => 'apresentação sem Key Binding JWT'];
+    }
+    if ($holderJwk === null) {
+        return ['valid' => false, 'reason' => 'cartão sem chave do titular (cnf.jwk) para verificar'];
+    }
+    if ($expectedNonce === null || $expectedNonce === '') {
+        return ['valid' => false, 'reason' => 'sessão sem nonce guardado para comparar'];
+    }
+
+    $parts = explode('.', $kbJwt);
+    if (count($parts) !== 3) {
+        return ['valid' => false, 'reason' => 'Key Binding JWT malformado'];
+    }
+    if (!verify_es256_jwt($kbJwt, $holderJwk)) {
+        return ['valid' => false, 'reason' => 'assinatura do Key Binding JWT inválida'];
+    }
+
+    $payload = json_decode(base64url_decode($parts[1]), true);
+    if (!is_array($payload)) {
+        return ['valid' => false, 'reason' => 'payload do Key Binding JWT inválido'];
+    }
+    if (($payload['nonce'] ?? null) !== $expectedNonce) {
+        return ['valid' => false, 'reason' => 'nonce do Key Binding JWT não corresponde (possível reutilização)'];
+    }
+    if (($payload['aud'] ?? null) !== $expectedAud) {
+        return ['valid' => false, 'reason' => 'aud do Key Binding JWT não corresponde a este pedido'];
+    }
+    $iat = $payload['iat'] ?? null;
+    if (!is_int($iat) || abs(time() - $iat) > $maxAgeSeconds) {
+        return ['valid' => false, 'reason' => 'Key Binding JWT sem "iat" válido ou demasiado antigo'];
+    }
+
+    return ['valid' => true, 'reason' => null, 'iat' => $iat, 'kb_jwt' => $kbJwt];
+}
+
 function presentation_store_path(string $session): string
 {
     if (!is_dir(PRESENTATION_STORE_DIR)) {
@@ -752,7 +806,7 @@ function update_checkout_session(string $session, array $fields): void
  * assumed to be a bare "true"/"false" body, a JSON boolean, or
  * {"result": true/false}. Adjust both once the actual script is written.
  */
-function execute_wallet_payment(string $payerPublicId, string $receiverPublicId, string $amount, string $currency, string $description, ?array &$debug = null): bool
+function execute_wallet_payment(string $payerPublicId, string $receiverPublicId, string $amount, string $currency, string $description, string $orderReference = '', ?array &$debug = null): bool
 {
     $payload = [
         'publicId' => $payerPublicId,
@@ -760,6 +814,11 @@ function execute_wallet_payment(string $payerPublicId, string $receiverPublicId,
         'amount' => $amount,
         'currency' => $currency,
         'description' => $description,
+        // Whatever external order/cart identifier the caller has for
+        // this payment (e.g. the WooCommerce order id) -- '' if none
+        // was available yet. Lets Cyclos tie this transaction back to
+        // an order on the merchant's side.
+        'orderReference' => $orderReference,
     ];
 
     $ch = curl_init(CYCLOS_ENDPOINT);

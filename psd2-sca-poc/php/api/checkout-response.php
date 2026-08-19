@@ -55,6 +55,24 @@ if (!$signatureValid || !$lusopayId) {
     exit;
 }
 
+// Proof that this specific presentation -- not a captured/replayed one
+// -- came from the device that actually holds the card, right now, for
+// this specific checkout session. See verify_holder_key_binding() for
+// what each check means.
+$holderJwk = $parsed['payload']['cnf']['jwk'] ?? null;
+$expectedNonce = $checkoutSession['params']['nonce'] ?? null;
+$expectedAud = (($_SERVER['HTTPS'] ?? '') !== '' ? 'https' : 'http') . '://' . $_SERVER['HTTP_HOST'] . $_SERVER['REQUEST_URI'];
+$keyBinding = verify_holder_key_binding($parsed['kb_jwt'], $holderJwk, $expectedNonce, $expectedAud);
+
+if (!$keyBinding['valid']) {
+    update_checkout_session($session, [
+        'status' => 'REJECTED',
+        'errors' => ['prova de posse da carteira inválida: ' . $keyBinding['reason']],
+    ]);
+    echo json_encode([]);
+    exit;
+}
+
 $checkoutParams = $checkoutSession['params'];
 $cyclosDebug = null;
 $authorized = execute_wallet_payment(
@@ -63,6 +81,7 @@ $authorized = execute_wallet_payment(
     $checkoutParams['amount'],
     $checkoutParams['currency'],
     $checkoutParams['description'],
+    $checkoutParams['order_id'] ?? '',
     $cyclosDebug
 );
 
@@ -72,6 +91,11 @@ if ($authorized) {
         'transaction_id' => 'txn_' . bin2hex(random_bytes(16)),
         'lusopay_id' => $lusopayId,
         'name' => $parsed['claims']['name'] ?? null,
+        // Cryptographic proof this exact presentation was fresh and
+        // bound to this session (see verify_holder_key_binding()) --
+        // not returned by api/checkout-status.php, only visible via
+        // debug-checkout.php.
+        'key_binding' => ['iat' => $keyBinding['iat'], 'kb_jwt' => $keyBinding['kb_jwt']],
     ]);
 } else {
     // "debug" is not returned by api/checkout-status.php (it only

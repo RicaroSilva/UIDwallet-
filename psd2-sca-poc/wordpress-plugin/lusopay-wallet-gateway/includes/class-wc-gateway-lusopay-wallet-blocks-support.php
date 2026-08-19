@@ -32,8 +32,8 @@ final class WC_Gateway_LusoPay_Wallet_Blocks_Support extends AbstractPaymentMeth
         wp_register_script(
             'wc-lusopay-wallet-blocks',
             plugins_url('assets/js/lusopay-wallet-blocks.js', $pluginRoot . '/lusopay-wallet-gateway.php'),
-            ['wc-blocks-registry', 'wc-settings', 'wp-element', 'wp-i18n'],
-            '0.1.2',
+            ['wc-blocks-registry', 'wc-settings', 'wp-element', 'wp-i18n', 'wp-api-fetch'],
+            '0.1.3',
             true
         );
         return ['wc-lusopay-wallet-blocks'];

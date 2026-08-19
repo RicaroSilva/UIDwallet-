@@ -35,6 +35,22 @@
 		return id
 	}
 
+	// WooCommerce Blocks keeps a "draft" order tied to the current
+	// checkout session (with a real id/number) even before the buyer
+	// submits -- best-effort only: if this doesn't return one (older WC
+	// version, endpoint unavailable, etc.) the payment still goes through
+	// exactly as before, just without an order reference for Cyclos.
+	function fetchDraftOrderId() {
+		if ( ! window.wp || ! window.wp.apiFetch ) {
+			return Promise.resolve( '' )
+		}
+		return window.wp.apiFetch( { path: '/wc/store/v1/checkout', method: 'GET' } )
+			.then( function ( data ) {
+				return ( data && data.order_id ) ? String( data.order_id ) : ''
+			} )
+			.catch( function () { return '' } )
+	}
+
 	// Polls our own admin-ajax proxy (never the LusoPay domain directly,
 	// to avoid needing CORS there) until the session resolves, or until
 	// the popup window is closed by the buyer without finishing.
@@ -95,21 +111,29 @@
 				const minorUnit = ( billing && billing.currency && typeof billing.currency.minorUnit === 'number' ) ? billing.currency.minorUnit : 2
 				const amount = ( cartTotalMinor / Math.pow( 10, minorUnit ) ).toFixed( 2 )
 				const currency = ( billing && billing.currency && billing.currency.code ) || 'EUR'
+				let popup = null
 
-				const params = new URLSearchParams( {
-					amount: amount,
-					currency: currency,
-					description: settings.merchant ? ( 'Compra em ' + settings.merchant ) : 'Compra online',
-					merchant: settings.merchant || '',
-					merchant_public_id: settings.merchantPublicId,
-					return_url: window.location.href,
-					session: session,
-				} )
-				const popupUrl = settings.checkoutUrl + '?' + params.toString()
-				const popup = window.open( popupUrl, 'lusopay_wallet_checkout', 'width=440,height=760' )
-				setStatusText( 'A aguardar confirmação na Carteira Digital...' )
+				return fetchDraftOrderId().then( function ( orderId ) {
+					const description = settings.merchant
+						? ( 'Compra em ' + settings.merchant + ( orderId ? ' (encomenda #' + orderId + ')' : '' ) )
+						: 'Compra online'
 
-				return waitForOutcome( session, popup ).then( function ( data ) {
+					const params = new URLSearchParams( {
+						amount: amount,
+						currency: currency,
+						description: description,
+						merchant: settings.merchant || '',
+						merchant_public_id: settings.merchantPublicId,
+						return_url: window.location.href,
+						session: session,
+						order_id: orderId,
+					} )
+					const popupUrl = settings.checkoutUrl + '?' + params.toString()
+					popup = window.open( popupUrl, 'lusopay_wallet_checkout', 'width=440,height=760' )
+					setStatusText( 'A aguardar confirmação na Carteira Digital...' )
+
+					return waitForOutcome( session, popup )
+				} ).then( function ( data ) {
 					if ( popup && ! popup.closed ) { popup.close() }
 					setStatusText( '' )
 

@@ -49,6 +49,18 @@ $amount = number_format((float) $amount, 2, '.', '');
 $requestedSession = $_GET['session'] ?? '';
 $presetSession = preg_match('/^[A-Za-z0-9_-]{8,64}$/', $requestedSession) ? $requestedSession : null;
 
+// Optional external order/cart reference (e.g. a WooCommerce order id)
+// so it can be forwarded to Cyclos alongside the payment -- '' if the
+// caller doesn't have one yet (e.g. the Blocks flow asks the wallet for
+// payment before the WooCommerce order exists).
+$orderId = isset($_GET['order_id']) && ctype_digit((string) $_GET['order_id']) ? (string) $_GET['order_id'] : '';
+
+// Generated once and stored below so api/checkout-response.php can
+// compare it against the Key Binding JWT's own "nonce" claim -- proof
+// that a specific wallet presentation was made *for this specific
+// checkout session*, not replayed from an earlier one.
+$nonce = base64url_random();
+
 $session = create_checkout_session([
     'amount' => $amount,
     'currency' => $currency,
@@ -56,6 +68,8 @@ $session = create_checkout_session([
     'merchant' => $merchant,
     'return_url' => $returnUrl,
     'merchant_public_id' => $merchantPublicId,
+    'order_id' => $orderId,
+    'nonce' => $nonce,
 ], $presetSession);
 
 $scheme = (($_SERVER['HTTPS'] ?? '') !== '') ? 'https' : 'http';
@@ -96,7 +110,7 @@ $params = [
     'client_id' => 'redirect_uri:' . $walletResponseUri,
     'response_uri' => $walletResponseUri,
     'response_mode' => 'direct_post',
-    'nonce' => base64url_random(),
+    'nonce' => $nonce,
     'dcql_query' => json_encode($dcqlQuery, JSON_UNESCAPED_SLASHES),
     'client_metadata' => json_encode($clientMetadata, JSON_UNESCAPED_SLASHES),
     'state' => base64url_random(),
