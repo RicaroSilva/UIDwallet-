@@ -562,14 +562,24 @@ function verify_holder_key_binding(?string $kbJwt, ?array $holderJwk, ?string $e
         return ['valid' => false, 'reason' => 'payload do Key Binding JWT inválido'];
     }
     if (($payload['nonce'] ?? null) !== $expectedNonce) {
-        return ['valid' => false, 'reason' => 'nonce do Key Binding JWT não corresponde (possível reutilização)'];
+        return [
+            'valid' => false,
+            'reason' => 'nonce do Key Binding JWT não corresponde (possível reutilização)',
+            'expected' => $expectedNonce,
+            'received' => $payload['nonce'] ?? null,
+        ];
     }
     if (($payload['aud'] ?? null) !== $expectedAud) {
-        return ['valid' => false, 'reason' => 'aud do Key Binding JWT não corresponde a este pedido'];
+        return [
+            'valid' => false,
+            'reason' => 'aud do Key Binding JWT não corresponde a este pedido',
+            'expected' => $expectedAud,
+            'received' => $payload['aud'] ?? null,
+        ];
     }
     $iat = $payload['iat'] ?? null;
     if (!is_int($iat) || abs(time() - $iat) > $maxAgeSeconds) {
-        return ['valid' => false, 'reason' => 'Key Binding JWT sem "iat" válido ou demasiado antigo'];
+        return ['valid' => false, 'reason' => 'Key Binding JWT sem "iat" válido ou demasiado antigo', 'received' => $iat];
     }
 
     return ['valid' => true, 'reason' => null, 'iat' => $iat, 'kb_jwt' => $kbJwt];

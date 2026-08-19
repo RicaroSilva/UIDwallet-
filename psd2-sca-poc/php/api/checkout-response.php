@@ -61,13 +61,26 @@ if (!$signatureValid || !$lusopayId) {
 // what each check means.
 $holderJwk = $parsed['payload']['cnf']['jwk'] ?? null;
 $expectedNonce = $checkoutSession['params']['nonce'] ?? null;
-$expectedAud = (($_SERVER['HTTPS'] ?? '') !== '' ? 'https' : 'http') . '://' . $_SERVER['HTTP_HOST'] . $_SERVER['REQUEST_URI'];
+// Must match "client_id" exactly, prefix included -- for the
+// "redirect_uri:" client_id scheme (unauthenticated requests, see
+// checkout.php), the wallet is told the verifier's identity is that
+// whole string, so that's what it binds "aud" to, not the bare URL.
+$thisUrl = (($_SERVER['HTTPS'] ?? '') !== '' ? 'https' : 'http') . '://' . $_SERVER['HTTP_HOST'] . $_SERVER['REQUEST_URI'];
+$expectedAud = 'redirect_uri:' . $thisUrl;
 $keyBinding = verify_holder_key_binding($parsed['kb_jwt'], $holderJwk, $expectedNonce, $expectedAud);
 
 if (!$keyBinding['valid']) {
     update_checkout_session($session, [
         'status' => 'REJECTED',
         'errors' => ['prova de posse da carteira inválida: ' . $keyBinding['reason']],
+        // Not returned by api/checkout-status.php -- only visible via
+        // debug-checkout.php. Shows exactly what we expected vs what the
+        // wallet actually sent, so a mismatch (e.g. a different aud
+        // format) can be diagnosed without guessing.
+        'debug' => [
+            'expected' => $keyBinding['expected'] ?? null,
+            'received' => $keyBinding['received'] ?? null,
+        ],
     ]);
     echo json_encode([]);
     exit;
