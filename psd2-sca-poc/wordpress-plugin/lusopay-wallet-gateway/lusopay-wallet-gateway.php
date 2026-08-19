@@ -2,7 +2,7 @@
 /**
  * Plugin Name: LusoPay Wallet Gateway
  * Description: Método de pagamento WooCommerce que identifica o cliente pela Carteira Digital LusoPay (EUDI Wallet) antes de autorizar o pagamento via Cyclos.
- * Version: 0.1.2
+ * Version: 0.1.3
  * Requires Plugins: woocommerce
  */
 
@@ -56,8 +56,12 @@ function lusopay_wallet_connect_status(): void
     }
 
     $session = isset($_GET['session']) ? sanitize_text_field(wp_unslash($_GET['session'])) : '';
-    $settings = get_option('woocommerce_lusopay_wallet_settings', []);
-    $resultUrl = $settings['connect_result_url'] ?? '';
+    // Reads through the gateway's own properties (not get_option()
+    // directly) so this benefits from the same "fall back to the form
+    // field's default when the saved value is blank" logic its
+    // constructor already applies -- see class-wc-gateway-lusopay-wallet.php.
+    $gateway = new WC_Gateway_LusoPay_Wallet();
+    $resultUrl = $gateway->connect_result_url;
 
     if ($session === '' || $resultUrl === '') {
         wp_send_json(['status' => 'PENDING']);
@@ -93,8 +97,12 @@ function lusopay_wallet_checkout_status(): void
         wp_send_json(['status' => 'PENDING']);
     }
 
-    $settings = get_option('woocommerce_lusopay_wallet_settings', []);
-    $statusUrl = $settings['status_url'] ?? '';
+    // Same as above: read through the gateway's own $status_url property
+    // (already defaulted in its constructor) instead of get_option()
+    // directly, so a blank saved setting can't silently make every poll
+    // report PENDING forever without ever actually checking.
+    $gateway = new WC_Gateway_LusoPay_Wallet();
+    $statusUrl = $gateway->status_url;
     if ($statusUrl === '') {
         wp_send_json(['status' => 'PENDING']);
     }
