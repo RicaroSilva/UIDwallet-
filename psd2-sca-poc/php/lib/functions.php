@@ -770,6 +770,13 @@ function execute_wallet_payment(string $payerPublicId, string $receiverPublicId,
         CURLOPT_RETURNTRANSFER => true,
         CURLOPT_CONNECTTIMEOUT => 6,
         CURLOPT_TIMEOUT => 15,
+        // dev.lusopay.com:8444 is a dev/test Cyclos server without a
+        // certificate chain curl can verify (self-signed or missing
+        // intermediates) -- skip verification for this known dev
+        // endpoint. Do NOT do this if CYCLOS_ENDPOINT ever points at a
+        // real production Cyclos instance reachable over the internet.
+        CURLOPT_SSL_VERIFYPEER => false,
+        CURLOPT_SSL_VERIFYHOST => false,
     ]);
     $response = curl_exec($ch);
     $error = curl_error($ch);
