@@ -67,11 +67,13 @@ $expectedNonce = $checkoutSession['params']['nonce'] ?? null;
 // whole string, so that's what it binds "aud" to, not the bare URL.
 $thisUrl = (($_SERVER['HTTPS'] ?? '') !== '' ? 'https' : 'http') . '://' . $_SERVER['HTTP_HOST'] . $_SERVER['REQUEST_URI'];
 $expectedAud = 'redirect_uri:' . $thisUrl;
-// The exact base64url string sent as this session's "transaction_data"
-// entry in checkout.php -- stored verbatim so the hash can be
-// recomputed over the identical bytes, with no re-serialization risk.
-$expectedTransactionData = $checkoutSession['params']['transaction_data'] ?? null;
-$keyBinding = verify_holder_key_binding($parsed['kb_jwt'], $holderJwk, $expectedNonce, $expectedAud, $expectedTransactionData);
+// Not requiring a matching "transaction_data_hashes" for now -- the
+// real wallet tested against hard-rejects any request that includes
+// "transaction_data" at all (see checkout.php), so it's no longer sent
+// there, and there is nothing for the wallet to hash. Passing null here
+// disables that check in verify_holder_key_binding() without removing
+// the capability, in case a wallet/rulebook that supports it shows up.
+$keyBinding = verify_holder_key_binding($parsed['kb_jwt'], $holderJwk, $expectedNonce, $expectedAud, null);
 
 if (!$keyBinding['valid']) {
     update_checkout_session($session, [

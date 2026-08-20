@@ -142,7 +142,15 @@ $params = [
     'nonce' => $nonce,
     'dcql_query' => json_encode($dcqlQuery, JSON_UNESCAPED_SLASHES),
     'client_metadata' => json_encode($clientMetadata, JSON_UNESCAPED_SLASHES),
-    'transaction_data' => json_encode([$transactionDataEncoded], JSON_UNESCAPED_SLASHES),
+    // NOT sending "transaction_data" to the wallet -- the real wallet
+    // tested against it hard-rejects the whole request the moment it
+    // sees this parameter at all ("Only document signing is supported
+    // at this time"), before ever getting to presenting the card. It
+    // only supports transaction_data for its own document-signing flow,
+    // not for an arbitrary custom type like ours. $transactionDataEncoded
+    // is still computed and stored on the session above (harmless) in
+    // case a compliant wallet/rulebook shows up later, but
+    // api/checkout-response.php no longer requires a matching hash.
     'state' => base64url_random(),
 ];
 
