@@ -537,7 +537,7 @@ function parse_sd_jwt_vc_presentation(string $presentation): array
  *
  * Returns ['valid' => bool, 'reason' => ?string, 'iat' => ?int].
  */
-function verify_holder_key_binding(?string $kbJwt, ?array $holderJwk, ?string $expectedNonce, string $expectedAud, int $maxAgeSeconds = 300): array
+function verify_holder_key_binding(?string $kbJwt, ?array $holderJwk, ?string $expectedNonce, string $expectedAud, ?string $expectedTransactionData = null, int $maxAgeSeconds = 300): array
 {
     if ($kbJwt === null) {
         return ['valid' => false, 'reason' => 'apresentação sem Key Binding JWT'];
@@ -577,6 +577,35 @@ function verify_holder_key_binding(?string $kbJwt, ?array $holderJwk, ?string $e
             'received' => $payload['aud'] ?? null,
         ];
     }
+
+    // TS12 / PSD2 dynamic linking: proves the wallet cryptographically
+    // bound its approval to *this exact amount and payee* -- not just
+    // to a nonce/session -- by hashing the "transaction_data" entry we
+    // sent in the request and returning that hash here. Recomputes the
+    // same hash over the exact string we sent (stored verbatim on the
+    // checkout session, see checkout.php) and compares.
+    if ($expectedTransactionData !== null) {
+        $alg = $payload['transaction_data_hashes_alg'] ?? null;
+        if ($alg !== 'sha-256') {
+            return [
+                'valid' => false,
+                'reason' => 'transaction_data_hashes_alg do Key Binding JWT inesperado ou ausente',
+                'expected' => 'sha-256',
+                'received' => $alg,
+            ];
+        }
+        $expectedHash = base64url_encode(hash('sha256', $expectedTransactionData, true));
+        $hashes = $payload['transaction_data_hashes'] ?? null;
+        if (!is_array($hashes) || !in_array($expectedHash, $hashes, true)) {
+            return [
+                'valid' => false,
+                'reason' => 'transaction_data_hashes do Key Binding JWT não corresponde ao valor/beneficiário pedidos (possível manipulação)',
+                'expected' => $expectedHash,
+                'received' => $hashes,
+            ];
+        }
+    }
+
     $iat = $payload['iat'] ?? null;
     if (!is_int($iat) || abs(time() - $iat) > $maxAgeSeconds) {
         return ['valid' => false, 'reason' => 'Key Binding JWT sem "iat" válido ou demasiado antigo', 'received' => $iat];

@@ -67,7 +67,11 @@ $expectedNonce = $checkoutSession['params']['nonce'] ?? null;
 // whole string, so that's what it binds "aud" to, not the bare URL.
 $thisUrl = (($_SERVER['HTTPS'] ?? '') !== '' ? 'https' : 'http') . '://' . $_SERVER['HTTP_HOST'] . $_SERVER['REQUEST_URI'];
 $expectedAud = 'redirect_uri:' . $thisUrl;
-$keyBinding = verify_holder_key_binding($parsed['kb_jwt'], $holderJwk, $expectedNonce, $expectedAud);
+// The exact base64url string sent as this session's "transaction_data"
+// entry in checkout.php -- stored verbatim so the hash can be
+// recomputed over the identical bytes, with no re-serialization risk.
+$expectedTransactionData = $checkoutSession['params']['transaction_data'] ?? null;
+$keyBinding = verify_holder_key_binding($parsed['kb_jwt'], $holderJwk, $expectedNonce, $expectedAud, $expectedTransactionData);
 
 if (!$keyBinding['valid']) {
     update_checkout_session($session, [

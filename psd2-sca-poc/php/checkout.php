@@ -45,9 +45,12 @@ $amount = number_format((float) $amount, 2, '.', '');
 // it can poll for the outcome while holding the actual WooCommerce order
 // back) so it can know the session id up front, before the wallet
 // answers, instead of having to scrape it out of this page. Falls back
-// to a random one otherwise -- same pattern as pay-with-card.php.
+// to a random one otherwise -- same pattern as pay-with-card.php. This
+// is now always resolved to a concrete value *here* (rather than left
+// for create_checkout_session() to fill in when absent), since it also
+// doubles as this transaction's transaction_id below.
 $requestedSession = $_GET['session'] ?? '';
-$presetSession = preg_match('/^[A-Za-z0-9_-]{8,64}$/', $requestedSession) ? $requestedSession : null;
+$session = preg_match('/^[A-Za-z0-9_-]{8,64}$/', $requestedSession) ? $requestedSession : bin2hex(random_bytes(16));
 
 // Optional external order/cart reference (e.g. a WooCommerce order id)
 // so it can be forwarded to Cyclos alongside the payment -- '' if the
@@ -61,7 +64,32 @@ $orderId = isset($_GET['order_id']) && ctype_digit((string) $_GET['order_id']) ?
 // checkout session*, not replayed from an earlier one.
 $nonce = base64url_random();
 
-$session = create_checkout_session([
+// EUDI Wallet TS12 ("SCA implementation with the wallet") dynamic
+// linking: the wallet is asked to cryptographically bind its approval
+// to this exact amount and payee, not just to "a session" -- it hashes
+// this object (as the exact base64url string below) and returns that
+// hash inside the Key Binding JWT's "transaction_data_hashes", which
+// api/checkout-response.php recomputes and compares. Without this, a
+// KB-JWT only proves "the wallet approved something for this nonce",
+// never "the wallet was shown and approved *this amount, to this
+// payee*" -- which is the actual PSD2 dynamic-linking requirement.
+$transactionDataPayload = [
+    'type' => 'urn:eudi:sca:payment:1',
+    'credential_ids' => ['lusopay_card'],
+    'transaction_data_hashes_alg' => ['sha-256'],
+    'payload' => [
+        'transaction_id' => $session,
+        'payee' => [
+            'name' => $merchant,
+            'id' => $merchantPublicId,
+        ],
+        'currency' => $currency,
+        'amount' => (float) $amount,
+    ],
+];
+$transactionDataEncoded = base64url_encode(json_encode($transactionDataPayload, JSON_UNESCAPED_SLASHES));
+
+create_checkout_session([
     'amount' => $amount,
     'currency' => $currency,
     'description' => $description,
@@ -70,7 +98,8 @@ $session = create_checkout_session([
     'merchant_public_id' => $merchantPublicId,
     'order_id' => $orderId,
     'nonce' => $nonce,
-], $presetSession);
+    'transaction_data' => $transactionDataEncoded,
+], $session);
 
 $scheme = (($_SERVER['HTTPS'] ?? '') !== '') ? 'https' : 'http';
 $host = $_SERVER['HTTP_HOST'];
@@ -113,6 +142,7 @@ $params = [
     'nonce' => $nonce,
     'dcql_query' => json_encode($dcqlQuery, JSON_UNESCAPED_SLASHES),
     'client_metadata' => json_encode($clientMetadata, JSON_UNESCAPED_SLASHES),
+    'transaction_data' => json_encode([$transactionDataEncoded], JSON_UNESCAPED_SLASHES),
     'state' => base64url_random(),
 ];
 
